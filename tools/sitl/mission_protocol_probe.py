@@ -91,7 +91,7 @@ def upload_and_verify(link):
         if int(item.seq) != idx:
             raise RuntimeError(f"Unexpected readback sequence {item.seq} != {idx}")
         if abs(int(item.x)-route[idx][0]) > 2 or abs(int(item.y)-route[idx][1]) > 2:
-            raise RuntimeError(f"Readback coordinate mismatch at {idx}")
+            raise RuntimeError(f"Readback coordinate mismatch at {idx}: got=({item.x},{item.y}) expected=({route[idx][0]},{route[idx][1]}) frame={item.frame} command={item.command}")
         readback.append({"sequence": idx, "latitude_1e7": int(item.x),
                          "longitude_1e7": int(item.y)})
     return {"mission_uploaded": True, "mission_readback_verified": True,

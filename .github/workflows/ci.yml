@@ -19,6 +19,14 @@ jobs:
         run: ./build/boat_sim > /tmp/boat_trajectory.csv && test $(wc -l < /tmp/boat_trajectory.csv) -gt 200
       - name: Run synthetic 3D INS GNSS-denial experiment
         run: ./build/boat_ins_demo > /tmp/boat_ins_trajectory.csv && test $(wc -l < /tmp/boat_ins_trajectory.csv) -gt 190
+      - name: Save simulation trajectories
+        uses: actions/upload-artifact@v4
+        with:
+          name: boat-navigation-trajectories
+          path: |
+            /tmp/boat_trajectory.csv
+            /tmp/boat_ins_trajectory.csv
+          retention-days: 30
 
   mavlink:
     name: MAVLink2 encoder compatibility

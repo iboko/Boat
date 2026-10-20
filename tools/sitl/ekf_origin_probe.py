@@ -131,6 +131,7 @@ for msg, rate in ((mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT, 5),
 observations = {"ekf_samples": 0, "local_position_samples": 0,
                 "absolute_position_flag_samples": 0,
                 "relative_position_flag_samples": 0,
+                "external_nav_use_reports": 0,
                 "latest_ekf_flags": None,
                 "last_local_position": None,
                 "status_text": [],
@@ -160,6 +161,8 @@ while time.monotonic() < stop:
         msg_text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
         if any(token in msg_text.lower() for token in
                ("ekf", "origin", "vision", "external", "gps", "yaw")):
+            if "is using external nav data" in msg_text.lower():
+                observations["external_nav_use_reports"] += 1
             observations["status_text"].append(msg_text[:160])
             observations["status_text"] = observations["status_text"][-35:]
 
@@ -171,11 +174,14 @@ observations["ekf_horizontal_estimate_observed"] = bool(
     observations["relative_position_flag_samples"])
 observations["ekf_state_telemetry_observed"] = bool(
     observations["ekf_samples"] and observations["local_position_samples"])
+observations["external_nav_selected_by_ekf_reported"] = bool(
+    observations["external_nav_use_reports"])
 observations["external_nav_fusion_directly_proven"] = False
 dump("ekf_observations.json", observations)
 print("SITL_EKF_OBSERVATIONS " + json.dumps({
     k: observations[k] for k in (
         "ekf_samples", "local_position_samples",
         "absolute_position_flag_samples", "relative_position_flag_samples",
-        "ekf_horizontal_estimate_observed", "ekf_state_telemetry_observed")}),
+        "ekf_horizontal_estimate_observed", "ekf_state_telemetry_observed",
+        "external_nav_use_reports", "external_nav_selected_by_ekf_reported")}),
     flush=True)

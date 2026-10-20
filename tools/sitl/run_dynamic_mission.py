@@ -74,6 +74,12 @@ def main():
     max_dist_from_start = 0.0
     armed = False
     mode_auto = False
+    ever_armed = False
+    ever_auto = False
+    command_sent = False
+    command_at = None
+    truth_ekf_errors = []
+    last_truth = None
     last_truth_monotonic = None
     start = time.monotonic()
     begun = None
@@ -115,6 +121,8 @@ def main():
             typ=msg.get_type()
             if typ=="LOCAL_POSITION_NED":
                 last_ekf=(float(msg.x),float(msg.y))
+                if last_truth is not None and last_truth_monotonic is not None and now-last_truth_monotonic<0.3:
+                    truth_ekf_errors.append(math.hypot(last_ekf[0]-last_truth[0],last_ekf[1]-last_truth[1]))
             elif typ=="MISSION_CURRENT":
                 nav_seq=int(msg.seq)
                 seen_seq.add(nav_seq)
@@ -129,6 +137,8 @@ def main():
             elif typ=="HEARTBEAT" and msg.get_srcSystem()==link.target_system:
                 armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
                 mode_auto = bool((msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED) and int(msg.custom_mode)==10)
+                ever_armed = ever_armed or armed
+                ever_auto = ever_auto or mode_auto
             elif typ=="SIM_STATE":
                 lat_int=int(getattr(msg,"lat_int",0))
                 lon_int=int(getattr(msg,"lon_int",0))
@@ -141,6 +151,7 @@ def main():
                 require(abs(north)<2000 and abs(east)<2000,
                         "SIM_STATE truth far outside survey datum")
                 last_truth_monotonic=now
+                last_truth=(north,east)
                 if begun is None:
                     begun=now
                 elapsed=now-begun
@@ -175,7 +186,7 @@ def main():
                         nav_seq,round(max_dist_from_start,3),
                         *[round(x,3) for x in closest[1:]],
                     ])
-                if not mode_auto and warm_samples>=25 and now-start>4.0:
+                if not command_sent and warm_samples>=25 and now-start>4.0:
                     link.set_mode("AUTO")
                     # Valid, non-forced arming command. No altered safety checks.
                     link.mav.command_long_send(link.target_system,
@@ -183,8 +194,11 @@ def main():
                         mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
                         0,1,0,0,0,0,0,0)
                     print("SITL_AUTO_ARM_REQUESTED (ordinary non-forced)",flush=True)
-                    mode_auto=True  # command sent; separately check HEARTBEAT below
-                if max_dist_from_start>15.0 and all(x<4.5 for x in closest[1:]):
+                    command_sent=True
+                    command_at=now  # confirmation requires HEARTBEAT, not the request itself
+                if command_sent and not ever_armed and now-command_at>25.0:
+                    raise RuntimeError("ordinary arming not confirmed; status: "+str(statuses[-10:]))
+                if max_dist_from_start>15.0 and all(x<4.5 for x in closest[1:]) and ever_armed and ever_auto:
                     print("SITL_DYNAMIC_PHYSICS_WAYPOINTS_VISITED",flush=True)
                     break
             if bridge and bridge.poll() is not None:
@@ -194,7 +208,12 @@ def main():
             "fixture":"SITL physics truth -> C++ synthetic ODOMETRY; NOT real INS/radar",
             "gnss_from_ardupilot_parameters":"disabled in separate origin probe",
             "mission_loaded_and_readback":True,
-            "mission_executed": bool(max_dist_from_start>15.0),
+            "mission_executed": bool(max_dist_from_start>15.0 and ever_armed and ever_auto),
+            "armed_heartbeat_observed":ever_armed,
+            "auto_heartbeat_observed":ever_auto,
+            "ekf_physics_error_samples":len(truth_ekf_errors),
+            "ekf_physics_mean_horizontal_error_m":(round(sum(truth_ekf_errors)/len(truth_ekf_errors),3) if truth_ekf_errors else None),
+            "ekf_physics_p95_horizontal_error_m":(round(sorted(truth_ekf_errors)[int(0.95*(len(truth_ekf_errors)-1))],3) if truth_ekf_errors else None),
             "physics_distance_max_from_start_m":round(max_dist_from_start,3),
             "closest_true_distance_to_route_m":[round(x,3) for x in closest],
             "mission_sequences_seen":sorted(seen_seq),
@@ -205,6 +224,8 @@ def main():
             "recorded_ground_truth_source":"MAVLink SIM_STATE, not EKF",
         }
         require(warm_samples>=30,"too few dynamic truth samples")
+        require(ever_armed and ever_auto,"Rover heartbeat did not confirm armed AUTO mode")
+        require(len(truth_ekf_errors)>=20,"no paired EKF/physics trajectory measurements")
         require(max_dist_from_start>15.0,
                 "no real vehicle movement seen in SITL physical truth")
         require(all(x<4.5 for x in closest[1:]),

@@ -1,6 +1,7 @@
 #pragma once
 #include "boat/ins.hpp"
 #include "boat/shore_ranges.hpp"
+#include "boat/shore_association.hpp"
 
 namespace boat::fixture {
 
@@ -18,6 +19,8 @@ struct SensorSet {
     ins::ImuSample imu{};
     ins::AbsoluteFix shore_fix{};
     ShoreRanges shore_ranges{};
+    AnonymousRanges unlabelled_echoes{};
+    unsigned unassociated_echoes{};
     unsigned range_inliers{};
     ins::GroundVelocity bottom_track{};
     ins::GroundVelocity water_track{};
@@ -38,6 +41,7 @@ struct Scenario {
     double gyro_bias_radps{0.0007};
     double modeled_current_n_mps{0.35};
     double modeled_current_e_mps{-0.20};
+    double max_non_gnss_fix_age_s{6.0};
 };
 
 class SyntheticSensors {
@@ -51,6 +55,7 @@ public:
     unsigned missedDvlCount() const { return missing_dvl_count_; }
     unsigned waterModeCount() const { return water_mode_count_; }
     unsigned radarOutlierCount() const { return range_outlier_count_; }
+    unsigned clutterDiscardCount() const { return clutter_discard_count_; }
 
 private:
     Scenario scenario_{};
@@ -61,6 +66,7 @@ private:
     unsigned shore_count_{0}, dvl_count_{0};
     unsigned missing_shore_count_{0}, missing_dvl_count_{0};
     unsigned water_mode_count_{0}, range_outlier_count_{0};
+    unsigned clutter_discard_count_{0};
 };
 
 // Interface accepts no GNSS input. First fix/attitude are synthetic
@@ -72,6 +78,7 @@ public:
     const ins::State& state() const { return estimator_.state(); }
     const SensorSet& sensors() const { return latest_; }
     bool integrity() const;
+    double lastShoreFixTimeS() const { return estimator_.state().last_non_gnss_fix_s; }
     unsigned propagated() const { return propagated_; }
     unsigned rejectedSteps() const { return rejected_steps_; }
     const SyntheticSensors& generator() const { return sensors_; }
@@ -79,6 +86,7 @@ public:
 private:
     SyntheticSensors sensors_;
     ins::ErrorStateIns estimator_;
+    double max_fix_age_s_{6.0};
     SensorSet latest_{};
     bool first_{true};
     unsigned propagated_{0}, rejected_steps_{0};

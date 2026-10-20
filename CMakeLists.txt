@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Boat VERSION 0.9.0 LANGUAGES CXX)
+project(Boat VERSION 0.10.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,7 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(BOAT_WITH_MAVLINK "Compile optional MAVLink 2 odometry encoder" OFF)
 set(BOAT_MAVLINK_INCLUDE_DIR "" CACHE PATH "Directory containing common/mavlink.h")
 
-add_library(boat_core STATIC src/navigation.cpp src/ardupilot.cpp src/ins.cpp src/sitl_link.cpp src/sensor_fixture.cpp src/shore_ranges.cpp src/shore_association.cpp src/marine_kinematics.cpp)
+add_library(boat_core STATIC src/navigation.cpp src/ardupilot.cpp src/ins.cpp src/sitl_link.cpp src/sensor_fixture.cpp src/shore_ranges.cpp src/shore_association.cpp src/marine_kinematics.cpp src/marine_dynamics.cpp)
 target_include_directories(boat_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(MSVC)
   target_compile_options(boat_core PRIVATE /W4 /permissive-)
@@ -25,6 +25,9 @@ endif()
 
 add_executable(boat_ins_demo apps/ins_demo.cpp)
 target_link_libraries(boat_ins_demo PRIVATE boat_core)
+
+add_executable(boat_marine_validation apps/marine_validation.cpp)
+target_link_libraries(boat_marine_validation PRIVATE boat_core)
 
 add_executable(boat_sim apps/sim_main.cpp)
 target_link_libraries(boat_sim PRIVATE boat_core)
@@ -48,6 +51,9 @@ add_test(NAME boat_association_tests COMMAND boat_association_tests)
 add_executable(boat_marine_tests tests/test_marine_kinematics.cpp)
 target_link_libraries(boat_marine_tests PRIVATE boat_core)
 add_test(NAME boat_marine_tests COMMAND boat_marine_tests)
+add_executable(boat_marine_dynamics_tests tests/test_marine_dynamics.cpp)
+target_link_libraries(boat_marine_dynamics_tests PRIVATE boat_core)
+add_test(NAME boat_marine_dynamics_tests COMMAND boat_marine_dynamics_tests)
 
 if(BOAT_WITH_MAVLINK)
   if(UNIX)

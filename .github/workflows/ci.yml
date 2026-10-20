@@ -75,6 +75,12 @@ jobs:
         run: bash tools/sitl/run_sitl_smoke.sh
       - name: Run dynamic Rover AUTO physics-truth experiment without GNSS
         run: bash tools/sitl/run_sitl_dynamic.sh
+      - name: Run no-GNSS AUTO with synthetic IMU shore radar bottom-track DVL and C++ ESKF
+        run: |
+          BOAT_DYNAMIC_BRIDGE_BINARY="$GITHUB_WORKSPACE/build-mavlink/boat_sitl_sensor" \
+          BOAT_DYNAMIC_MODE=sensor-eskf \
+          RUN_DIR="$GITHUB_WORKSPACE/sitl-sensor-output" \
+          bash tools/sitl/run_sitl_dynamic.sh
       - name: Upload ArduRover logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -91,4 +97,7 @@ jobs:
             sitl-dynamic-output/*.log
             sitl-dynamic-output/*.csv
             sitl-dynamic-output/*.json
+            sitl-sensor-output/*.log
+            sitl-sensor-output/*.csv
+            sitl-sensor-output/*.json
           retention-days: 30

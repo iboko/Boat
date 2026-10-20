@@ -53,6 +53,10 @@ else:
     print((root/"console.log").read_text(errors="replace"),file=sys.stderr)
     sys.exit("SITL EKF origin not confirmed before dynamic test")
 PY
+echo "Priming EKF3 with valid origin-aligned stationary external odometry"
+"$ROOT/build-mavlink/boat_sitl_bridge" --sitl-fixture --port 5762 --seconds 8 \
+    | tee "$RUN_DIR/initial_external_nav.log"
+grep -q 'packets=80 ' "$RUN_DIR/initial_external_nav.log"
 echo "Launching physical Rover simulation with true SIM_STATE -> C++ external odometry"
 python3 "$ROOT/tools/sitl/run_dynamic_mission.py" --sitl-only \
     --duration 135 --cpp-bridge "$BRIDGE" --output-dir "$RUN_DIR" \

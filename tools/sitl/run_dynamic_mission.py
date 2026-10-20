@@ -198,7 +198,7 @@ def main():
                     command_at=now  # confirmation requires HEARTBEAT, not the request itself
                 if command_sent and not ever_armed and now-command_at>25.0:
                     raise RuntimeError("ordinary arming not confirmed; status: "+str(statuses[-10:]))
-                if max_dist_from_start>15.0 and all(x<4.5 for x in closest[1:]) and ever_armed and ever_auto:
+                if max_dist_from_start>15.0 and all(x<2.5 for x in closest[1:]) and (len(targets)-1) in reached and ever_armed and ever_auto:
                     print("SITL_DYNAMIC_PHYSICS_WAYPOINTS_VISITED",flush=True)
                     break
             if bridge and bridge.poll() is not None:
@@ -228,13 +228,17 @@ def main():
         require(len(truth_ekf_errors)>=20,"no paired EKF/physics trajectory measurements")
         require(max_dist_from_start>15.0,
                 "no real vehicle movement seen in SITL physical truth")
-        require(all(x<4.5 for x in closest[1:]),
-                "physical truth did not reach all waypoint locations")
+        require(all(x<2.5 for x in closest[1:]),
+                "physical truth did not pass within 2.5m of each waypoint")
+        require((len(targets)-1) in reached,
+                "ArduPilot did not confirm last waypoint reached")
         result["pass"]=True
         print("SITL_DYNAMIC_ROUTE_PASS "+json.dumps({
             "samples":warm_samples,
             "max_displacement_m":round(max_dist_from_start,2),
-            "closest_m":result["closest_true_distance_to_route_m"]}),
+            "closest_m":result["closest_true_distance_to_route_m"],
+            "mission_reached_events":sorted(reached),
+            "ekf_physics_p95_m":result["ekf_physics_p95_horizontal_error_m"]}),
               flush=True)
     except Exception as exc:
         failure=str(exc)

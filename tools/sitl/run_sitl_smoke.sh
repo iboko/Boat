@@ -12,6 +12,13 @@ if [[ ! -x "$BRIDGE" ]]; then echo "Missing Boat bridge: $BRIDGE"; exit 2; fi
 cleanup() {
     local status=$?
     if [[ "$status" -ne 0 ]]; then
+        echo "===== Rover process diagnostics ====="
+        ps -ef | grep -E "ardurover|run_sitl|console_keeper" | grep -v grep || true
+        echo "===== Rover binary diagnostics ====="
+        file "$BINARY" || true
+        ldd "$BINARY" || true
+        echo "===== TCP sockets ====="
+        (ss -lnt || true)
         echo "===== Rover SITL diagnostics ====="
         cat "$RUN_DIR/rover_sitl.log" 2>/dev/null || true
         echo "===== SERIAL0 console diagnostics ====="
@@ -29,7 +36,7 @@ trap cleanup EXIT
 echo "Launching official ArduRover SITL binary (no arming, no waypoints)"
 (
     cd "$RUN_DIR"
-    "$BINARY" --model boat --home=-35.363261,149.165230,584,0 \
+    stdbuf -oL -eL "$BINARY" --model boat --home=-35.363261,149.165230,584,0 \
         --defaults="$ROOT/tools/sitl/rover_nogps.parm" --wipe \
         > "$RUN_DIR/rover_sitl.log" 2>&1
 ) &

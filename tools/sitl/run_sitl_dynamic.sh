@@ -8,7 +8,7 @@ mkdir -p "$RUN_DIR"
 BINARY="${ARDUROVER_BINARY:-$ROOT/sitl-smoke-output/ardurover}"
 BRIDGE="${BOAT_DYNAMIC_BRIDGE_BINARY:-$ROOT/build-mavlink/boat_sitl_dynamic}"
 BRIDGE_MODE="${BOAT_DYNAMIC_MODE:-direct-truth}"
-[[ "$BRIDGE_MODE" == "direct-truth" || "$BRIDGE_MODE" == "sensor-eskf" ]] || { echo "Unsupported bridge mode"; exit 2; }
+[[ "$BRIDGE_MODE" == "direct-truth" || "$BRIDGE_MODE" == "sensor-eskf" || "$BRIDGE_MODE" == "sensor-blackout" ]] || { echo "Unsupported bridge mode"; exit 2; }
 test -x "$BINARY" || { echo "Missing SITL binary"; exit 2; }
 test -x "$BRIDGE" || { echo "Missing C++ SITL dynamic bridge"; exit 2; }
 
@@ -63,5 +63,11 @@ echo "Launching Rover SITL physics with C++ external navigation mode=$BRIDGE_MOD
 python3 "$ROOT/tools/sitl/run_dynamic_mission.py" --sitl-only --bridge-mode "$BRIDGE_MODE" \
     --duration 135 --cpp-bridge "$BRIDGE" --output-dir "$RUN_DIR" \
     | tee "$RUN_DIR/dynamic_runner.log"
-grep -q SITL_DYNAMIC_ROUTE_PASS "$RUN_DIR/dynamic_runner.log"
-echo "PASS dynamic route verified against SIM_STATE physical truth with bridge=$BRIDGE_MODE"
+if [[ "$BRIDGE_MODE" == "sensor-blackout" ]]; then
+    grep -q SITL_BLACKOUT_HOLD_PASS "$RUN_DIR/dynamic_runner.log"
+    test -s "$RUN_DIR/navigation_integrity_failed.txt"
+    echo "PASS: synthetic radar loss caused verified HOLD via independent supervisor"
+else
+    grep -q SITL_DYNAMIC_ROUTE_PASS "$RUN_DIR/dynamic_runner.log"
+    echo "PASS dynamic route verified against SIM_STATE physical truth with bridge=$BRIDGE_MODE"
+fi

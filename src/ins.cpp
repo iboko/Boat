@@ -13,7 +13,6 @@ double cell(const Covariance15& m, int r, int c) { return m[static_cast<std::siz
 bool finite(double x) { return std::isfinite(x); }
 bool finite(Vec3 v) { return finite(v.x) && finite(v.y) && finite(v.z); }
 bool finite(Quaternion q) { return finite(q.w) && finite(q.x) && finite(q.y) && finite(q.z); }
-double component(Vec3 v, int i) { return i == 0 ? v.x : (i == 1 ? v.y : v.z); }
 double squared(double x) { return x * x; }
 void diagonal(Covariance15& m, int offset, double sigma) {
     for (int i = 0; i < 3; ++i) cell(m, offset + i, offset + i) = squared(sigma);

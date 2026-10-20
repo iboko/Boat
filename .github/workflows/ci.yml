@@ -83,5 +83,6 @@ jobs:
             sitl-smoke-output/parameters.json
             sitl-smoke-output/origin_result.json
             sitl-smoke-output/ekf_observations.json
+            sitl-smoke-output/mission_protocol.json
             sitl-smoke-output/ardurover-git-version.txt
           retention-days: 30

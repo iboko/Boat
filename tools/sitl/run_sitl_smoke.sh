@@ -41,7 +41,7 @@ echo "Launching official ArduRover SITL binary (no arming, no waypoints)"
         > "$RUN_DIR/rover_sitl.log" 2>&1
 ) &
 SITL_PID=$!
-python3 "$ROOT/tools/sitl/console_keeper.py" 5760 "$RUN_DIR/parameters.json" > "$RUN_DIR/console.log" 2>&1 &
+python3 "$ROOT/tools/sitl/ekf_origin_probe.py" 5760 "$RUN_DIR" > "$RUN_DIR/console.log" 2>&1 &
 CONSOLE_PID=$!
 
 echo "Waiting for companion TCP 5762"
@@ -78,9 +78,47 @@ else:
 print(path.read_text(),flush=True)
 PY
 
+echo "Requiring geographic EKF origin confirmation before sending ODOMETRY"
+python3 - "$RUN_DIR/origin_result.json" "$RUN_DIR/console.log" <<'PY'
+import json, pathlib, sys, time
+path=pathlib.Path(sys.argv[1])
+log=pathlib.Path(sys.argv[2])
+for _ in range(100):
+    if path.is_file() and path.stat().st_size:
+        break
+    time.sleep(0.2)
+else:
+    if log.exists():
+        print(log.read_text(errors="replace"),file=sys.stderr)
+    sys.exit("FAIL: origin confirmation file not found")
+data=json.loads(path.read_text())
+if not data.get("origin_set_confirmed"):
+    sys.exit("FAIL: EKF origin not confirmed by telemetry")
+print("EKF_ORIGIN_CONFIRMED_BEFORE_EXTERNAL_NAV",flush=True)
+PY
+
 echo "Running 10Hz no-GNSS fixture on C++ companion"
 "$BRIDGE" --sitl-fixture --port 5762 --seconds 8 | tee "$RUN_DIR/bridge.log"
 grep -q 'packets=80 ' "$RUN_DIR/bridge.log"
 grep -q 'GNSS=denied' "$RUN_DIR/bridge.log"
 grep -q 'GNSS_DISABLED_CONFIRMED' "$RUN_DIR/console.log"
-echo "PASS: real Rover SITL heartbeat and C++ 10Hz ODOMETRY transport (NOT a mission test)"
+grep -q 'EKF_ORIGIN_CONFIRMED_FROM_TELEMETRY' "$RUN_DIR/console.log"
+echo "Waiting for independent EKF status observations"
+python3 - "$RUN_DIR/ekf_observations.json" "$RUN_DIR/console.log" <<'PY'
+import json, pathlib, sys, time
+path=pathlib.Path(sys.argv[1])
+log=pathlib.Path(sys.argv[2])
+for _ in range(100):
+    if path.is_file() and path.stat().st_size:
+        break
+    time.sleep(0.2)
+else:
+    if log.exists():
+        print(log.read_text(errors="replace"),file=sys.stderr)
+    sys.exit("FAIL: EKF telemetry report not produced")
+data=json.loads(path.read_text())
+print("EKF_STATUS_REPORT:",json.dumps(data),flush=True)
+if not data["ekf_state_telemetry_observed"]:
+    sys.exit("FAIL: no EKF status + LOCAL_POSITION_NED telemetry")
+PY
+echo "PASS: EKF origin echoed, horizontal EKF telemetry inspected, and ODOMETRY delivered (NOT proof of fusion or mission)"

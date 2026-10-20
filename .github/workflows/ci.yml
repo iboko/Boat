@@ -45,3 +45,38 @@ jobs:
         run: cmake --build build-mavlink --parallel 2
       - name: Decode test and regression tests
         run: ctest --test-dir build-mavlink --output-on-failure
+
+  rover-sitl:
+    name: Real Rover SITL transport smoke (no-GNSS)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout MAVLink C headers
+        uses: actions/checkout@v4
+        with:
+          repository: mavlink/c_library_v2
+          path: mavlink_headers
+          persist-credentials: false
+      - name: Build C++ bridge
+        run: |
+          cmake -S . -B build-mavlink -DCMAKE_BUILD_TYPE=Release -DBOAT_WITH_MAVLINK=ON -DBOAT_MAVLINK_INCLUDE_DIR="$GITHUB_WORKSPACE/mavlink_headers"
+          cmake --build build-mavlink --parallel 2
+          ctest --test-dir build-mavlink --output-on-failure
+      - name: Download official prebuilt ArduRover SITL binary
+        run: |
+          mkdir -p sitl-smoke-output
+          curl -fL --retry 3 --connect-timeout 20 https://firmware.ardupilot.org/Rover/latest/SITL_x86_64_linux_gnu/ardurover -o sitl-smoke-output/ardurover
+          curl -fL --retry 3 --connect-timeout 20 https://firmware.ardupilot.org/Rover/latest/SITL_x86_64_linux_gnu/git-version.txt -o sitl-smoke-output/ardurover-git-version.txt
+          chmod +x sitl-smoke-output/ardurover
+      - name: Run official Rover SITL with external-navigation fixture
+        run: bash tools/sitl/run_sitl_smoke.sh
+      - name: Upload ArduRover logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boat-ardurover-sitl-smoke
+          path: |
+            sitl-smoke-output/*.log
+            sitl-smoke-output/ardurover-git-version.txt
+          retention-days: 30

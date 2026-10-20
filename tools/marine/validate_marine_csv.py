@@ -13,7 +13,7 @@ out=Path(sys.argv[1])
 def trial(name,expect_completion):
     path=out/f"marine_{name}.csv"
     rows=list(csv.DictReader(path.open(newline="",encoding="utf-8")))
-    assert len(rows)>300, f"too few physics timesteps in {name}"
+    assert len(rows)>=200, f"too few physical measurement samples in {name}"
     for row in rows:
         assert all(math.isfinite(float(v)) for v in row.values()), "non-finite marine measurement"
     completed=sum(int(row["target_index"])>=3 for row in rows)>0

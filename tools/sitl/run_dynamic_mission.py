@@ -28,6 +28,7 @@ def require(condition, message):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sitl-only", action="store_true")
+    parser.add_argument("--bridge-mode",choices=("direct-truth","sensor-eskf"),default="direct-truth")
     parser.add_argument("--duration", type=int, default=135)
     parser.add_argument("--cpp-bridge", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -123,7 +124,7 @@ def main():
     failure=None
     try:
         bridge=subprocess.Popen(
-            [str(args.cpp_bridge.resolve()), "--sitl-dynamic-fixture"],
+            [str(args.cpp_bridge.resolve()), "--sitl-sensor-fusion-fixture" if args.bridge_mode=="sensor-eskf" else "--sitl-dynamic-fixture"],
             stdin=subprocess.PIPE, stdout=bridge_stdout, stderr=bridge_stderr,
             text=True, bufsize=1)
         require(bridge.stdin is not None, "bridge stdin not available")
@@ -227,7 +228,8 @@ def main():
                 raise RuntimeError(f"C++ bridge exited early with code {bridge.returncode}")
 
         result={
-            "fixture":"SITL physics truth -> C++ synthetic ODOMETRY; NOT real INS/radar",
+            "fixture":("SITL physics truth -> simulated noisy IMU/shore radar/bottom DVL -> C++ 15-state ESKF -> MAVLink" if args.bridge_mode=="sensor-eskf" else "SITL physics truth -> C++ synthetic ODOMETRY"),
+            "bridge_mode":args.bridge_mode,
             "gnss_from_ardupilot_parameters":"disabled in separate origin probe",
             "mission_loaded_and_readback":True,
             "mission_executed": bool(max_dist_from_start>15.0 and ever_armed and ever_auto),
@@ -248,6 +250,9 @@ def main():
         require(warm_samples>=30,"too few dynamic truth samples")
         require(ever_armed and ever_auto,"Rover heartbeat did not confirm armed AUTO mode")
         require(len(truth_ekf_errors)>=20,"no paired EKF/physics trajectory measurements")
+        if args.bridge_mode=="sensor-eskf":
+            p95=sorted(truth_ekf_errors)[int(0.95*(len(truth_ekf_errors)-1))]
+            require(p95<5.0, f"ESKF SITL P95 position error too large: {p95:.2f} m")
         require(max_dist_from_start>15.0,
                 "no real vehicle movement seen in SITL physical truth")
         require(all(x<2.5 for x in closest[1:]),

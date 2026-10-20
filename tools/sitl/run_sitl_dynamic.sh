@@ -7,6 +7,8 @@ RUN_DIR="${RUN_DIR:-$ROOT/sitl-dynamic-output}"
 mkdir -p "$RUN_DIR"
 BINARY="${ARDUROVER_BINARY:-$ROOT/sitl-smoke-output/ardurover}"
 BRIDGE="${BOAT_DYNAMIC_BRIDGE_BINARY:-$ROOT/build-mavlink/boat_sitl_dynamic}"
+BRIDGE_MODE="${BOAT_DYNAMIC_MODE:-direct-truth}"
+[[ "$BRIDGE_MODE" == "direct-truth" || "$BRIDGE_MODE" == "sensor-eskf" ]] || { echo "Unsupported bridge mode"; exit 2; }
 test -x "$BINARY" || { echo "Missing SITL binary"; exit 2; }
 test -x "$BRIDGE" || { echo "Missing C++ SITL dynamic bridge"; exit 2; }
 
@@ -57,9 +59,9 @@ echo "Priming EKF3 with valid origin-aligned stationary external odometry"
 "$ROOT/build-mavlink/boat_sitl_bridge" --sitl-fixture --port 5762 --seconds 8 \
     | tee "$RUN_DIR/initial_external_nav.log"
 grep -q 'packets=80 ' "$RUN_DIR/initial_external_nav.log"
-echo "Launching physical Rover simulation with true SIM_STATE -> C++ external odometry"
-python3 "$ROOT/tools/sitl/run_dynamic_mission.py" --sitl-only \
+echo "Launching Rover SITL physics with C++ external navigation mode=$BRIDGE_MODE"
+python3 "$ROOT/tools/sitl/run_dynamic_mission.py" --sitl-only --bridge-mode "$BRIDGE_MODE" \
     --duration 135 --cpp-bridge "$BRIDGE" --output-dir "$RUN_DIR" \
     | tee "$RUN_DIR/dynamic_runner.log"
 grep -q SITL_DYNAMIC_ROUTE_PASS "$RUN_DIR/dynamic_runner.log"
-echo "PASS dynamic route from independent SIM_STATE physical truth"
+echo "PASS dynamic route verified against SIM_STATE physical truth with bridge=$BRIDGE_MODE"

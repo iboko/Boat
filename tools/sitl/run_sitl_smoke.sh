@@ -41,7 +41,7 @@ echo "Launching official ArduRover SITL binary (no arming, no waypoints)"
         > "$RUN_DIR/rover_sitl.log" 2>&1
 ) &
 SITL_PID=$!
-python3 "$ROOT/tools/sitl/console_keeper.py" 5760 > "$RUN_DIR/console.log" 2>&1 &
+python3 "$ROOT/tools/sitl/console_keeper.py" 5760 "$RUN_DIR/parameters.json" > "$RUN_DIR/console.log" 2>&1 &
 CONSOLE_PID=$!
 
 echo "Waiting for companion TCP 5762"
@@ -61,8 +61,26 @@ else:
     sys.exit(4)
 PY
 
+echo "Verifying GNSS-denied EKF3 source selection from actual Rover telemetry"
+python3 - "$RUN_DIR/parameters.json" "$RUN_DIR/console.log" <<'PY'
+import pathlib, sys, time
+path=pathlib.Path(sys.argv[1])
+log=pathlib.Path(sys.argv[2])
+for _ in range(200):
+    if path.is_file() and path.stat().st_size>0:
+        break
+    time.sleep(0.2)
+else:
+    print("Live SITL parameter verification failed. Diagnostics:",file=sys.stderr)
+    if log.exists():
+        print(log.read_text(errors="replace"),file=sys.stderr)
+    sys.exit(5)
+print(path.read_text(),flush=True)
+PY
+
 echo "Running 10Hz no-GNSS fixture on C++ companion"
 "$BRIDGE" --sitl-fixture --port 5762 --seconds 8 | tee "$RUN_DIR/bridge.log"
 grep -q 'packets=80 ' "$RUN_DIR/bridge.log"
 grep -q 'GNSS=denied' "$RUN_DIR/bridge.log"
+grep -q 'GNSS_DISABLED_CONFIRMED' "$RUN_DIR/console.log"
 echo "PASS: real Rover SITL heartbeat and C++ 10Hz ODOMETRY transport (NOT a mission test)"

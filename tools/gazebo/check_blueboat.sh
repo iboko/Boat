@@ -40,7 +40,7 @@ echo "PREPARED_GAZEBO_BLUEBOAT_WORLD=$OUTPUT"
 echo "Required for manual physics-only launch (not executed):"
 printf 'export GZ_SIM_RESOURCE_PATH="%s:%s:%s:${GZ_SIM_RESOURCE_PATH:-}"\n' \
  "$SITL_MODELS_ROOT/Gazebo/models" "$ASV_WAVE_SIM_ROOT/gz-waves-models/models" "$ASV_WAVE_SIM_ROOT/gz-waves-models/worlds"
-printf 'export GZ_SIM_SYSTEM_PLUGIN_PATH="%s:%s:${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"\\n' \
+printf 'export GZ_SIM_SYSTEM_PLUGIN_PATH="%s:%s:\${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"\n' \
  "$ARDUPILOT_GAZEBO_BUILD" "$ASV_WAVE_SIM_PLUGIN_DIR"
 printf 'gz sim -s -r -v4 "%s"\n' "$OUTPUT"
 echo "Important: this did NOT run Gazebo, hydrodynamics, ArduPilot or Boat's ESKF."

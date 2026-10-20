@@ -81,6 +81,8 @@ jobs:
           BOAT_DYNAMIC_MODE=sensor-eskf \
           RUN_DIR="$GITHUB_WORKSPACE/sitl-sensor-output" \
           bash tools/sitl/run_sitl_dynamic.sh
+      - name: Verify sensor-ESKF output, outages and route completion
+        run: python3 tools/sitl/verify_sensor_eskf.py sitl-sensor-output
       - name: Upload ArduRover logs
         if: always()
         uses: actions/upload-artifact@v4

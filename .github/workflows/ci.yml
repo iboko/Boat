@@ -47,9 +47,9 @@ jobs:
         run: ctest --test-dir build-mavlink --output-on-failure
 
   rover-sitl:
-    name: Real Rover SITL transport smoke (no-GNSS)
+    name: Real Rover SITL, ExternalNav and dynamic AUTO
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Checkout MAVLink C headers
@@ -73,6 +73,8 @@ jobs:
           chmod +x sitl-smoke-output/ardurover
       - name: Run official Rover SITL with external-navigation fixture
         run: bash tools/sitl/run_sitl_smoke.sh
+      - name: Run dynamic Rover AUTO physics-truth experiment without GNSS
+        run: bash tools/sitl/run_sitl_dynamic.sh
       - name: Upload ArduRover logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -84,5 +86,9 @@ jobs:
             sitl-smoke-output/origin_result.json
             sitl-smoke-output/ekf_observations.json
             sitl-smoke-output/mission_protocol.json
+            sitl-smoke-output/sim_truth_probe.json
             sitl-smoke-output/ardurover-git-version.txt
+            sitl-dynamic-output/*.log
+            sitl-dynamic-output/*.csv
+            sitl-dynamic-output/*.json
           retention-days: 30

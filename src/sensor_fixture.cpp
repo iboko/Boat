@@ -26,7 +26,8 @@ SyntheticSensors::SyntheticSensors(Scenario s):scenario_(s) {
     if(!(s.radar_period_s>0.0 && s.dvl_period_s>0.0 &&
          s.radar_dropout_from_s<=s.radar_dropout_until_s &&
          s.bottom_dropout_from_s<=s.bottom_dropout_until_s &&
-         valid(s.accel_bias_mps2)&&valid(s.gyro_bias_radps))) {
+         valid(s.accel_bias_mps2)&&valid(s.gyro_bias_radps)&&
+         valid(s.modeled_current_n_mps)&&valid(s.modeled_current_e_mps))) {
         throw std::invalid_argument("invalid synthetic sensor scenario");
     }
 }
@@ -61,18 +62,32 @@ SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
                              scenario_.radar_dropout_until_s)) {
             ++missing_shore_count_;
         } else {
-            // Simulated surveyed shoreline position solution. No real radar scans.
-            result.shore_fix={t.time_s,
-                t.position_ned_m+periodicNoise(t.time_s,0.22),
-                0.65,0.85,ins::AbsoluteSource::ShoreRadar,true,true};
-            result.shore_fix_available=true;
-            ++shore_count_;
+            // Generate only noisy ranges to surveyed reflectors, NEVER
+            // a completed position fix from the physical truth.
+            result.shore_ranges=ShoreRangeModel::measure(
+                t.position_ned_m,t.time_s,true);
+            if(result.shore_ranges.valid) {
+                ++shore_count_;
+                if(t.time_s>=3.0 && t.time_s<5.0)
+                    ++range_outlier_count_;
+            } else ++missing_shore_count_;
         }
     }
     if(t.time_s-last_dvl_time_s>=scenario_.dvl_period_s-0.00001) {
         last_dvl_time_s=t.time_s;
         if(dropout(t.time_s,scenario_.bottom_dropout_from_s,
                              scenario_.bottom_dropout_until_s)) {
+            // Water-track DVL is still available, but it measures vessel
+            // velocity RELATIVE TO WATER. Unknown current forbids treating
+            // these readings as Earth/ground velocity corrections.
+            result.water_track={t.time_s,
+                t.ground_velocity_ned_mps-
+                  ins::Vec3{scenario_.modeled_current_n_mps,
+                            scenario_.modeled_current_e_mps,0.0}+
+                  periodicNoise(t.time_s,0.055),
+                0.17,0.20,false,true};
+            result.water_track_available=true;
+            ++water_mode_count_;
             ++missing_dvl_count_;
         } else {
             result.bottom_track={t.time_s,
@@ -94,12 +109,20 @@ bool SensorFusion::step(const PhysicsFrame& truth) {
     latest_=sensors_.observe(truth);
     if(!latest_.valid) {++rejected_steps_;return false;}
     if(first_) {
-        if(!latest_.shore_fix_available || !latest_.bottom_track_available) {
+        if(!latest_.shore_ranges.valid || !latest_.bottom_track_available) {
             ++rejected_steps_;
             return false;
         }
-        // Simulated initial surveyed position + surveyed heading / compass.
-        // Orientation at startup still comes from physics truth in v0.7.
+        // Only survey datum/vertical position and initial heading come
+        // from SITL test initialization. Horizontal position is computed
+        // solely by solving raw shoreline reflector ranges.
+        const auto survey=ShoreRangeModel::solve(
+            latest_.shore_ranges,{0,0,truth.position_ned_m.z});
+        if(!survey.valid) {++rejected_steps_;return false;}
+        latest_.range_inliers=survey.inliers;
+        latest_.shore_fix={truth.time_s,survey.position_ned_m,
+            0.65,0.85,ins::AbsoluteSource::ShoreRadar,true,true};
+        latest_.shore_fix_available=true;
         estimator_.initialize(truth.time_s,latest_.shore_fix.position_ned_m,
              latest_.bottom_track.velocity_ned_mps,
              ins::normalize(truth.body_to_ned),true);
@@ -127,8 +150,19 @@ bool SensorFusion::step(const PhysicsFrame& truth) {
     }
     if(latest_.bottom_track_available)
         (void)estimator_.correctGroundVelocity(latest_.bottom_track);
-    if(latest_.shore_fix_available)
-        (void)estimator_.correctPosition(latest_.shore_fix);
+    // Water-track velocity is explicitly NOT passed to correctGroundVelocity.
+    // No current estimator exists in this version.
+    if(latest_.shore_ranges.valid) {
+        const auto solution=ShoreRangeModel::solve(
+            latest_.shore_ranges,estimator_.state().position_ned_m);
+        if(solution.valid) {
+            latest_.range_inliers=solution.inliers;
+            latest_.shore_fix={truth.time_s,solution.position_ned_m,
+                0.65,0.85,ins::AbsoluteSource::ShoreRadar,true,true};
+            latest_.shore_fix_available=
+                estimator_.correctPosition(latest_.shore_fix);
+        }
+    }
     return true;
 }
 

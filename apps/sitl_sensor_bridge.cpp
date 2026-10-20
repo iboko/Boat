@@ -72,7 +72,7 @@ int main(int argc,char** argv) {
     std::cout<<std::fixed<<std::setprecision(4);
     std::cout<<"time_s,physics_truth_n,physics_truth_e,physics_truth_vn,physics_truth_ve,"
                 "eskf_n,eskf_e,estimate_error_m,odometry_sent,radar_fix,dvl_fix,"
-                "eskf_position_sigma_m\n";
+                "eskf_position_sigma_m,water_track,shore_ranges,shore_inliers\n";
     while(true) {
         pollfd fd{0,POLLIN,0};
         const int ready=::poll(&fd,1,3000);
@@ -149,7 +149,10 @@ int main(int argc,char** argv) {
                  <<error<<','<<int(eligible)<<','
                  <<int(fusion.sensors().shore_fix_available)<<','
                  <<int(fusion.sensors().bottom_track_available)<<','
-                 <<boat::ins::ErrorStateIns::horizontalSigmaM(estimate)<<"\n";
+                 <<boat::ins::ErrorStateIns::horizontalSigmaM(estimate)<<','
+                 <<int(fusion.sensors().water_track_available)<<','
+                 <<fusion.sensors().shore_ranges.count<<','
+                 <<fusion.sensors().range_inliers<<"\n";
         std::cout.flush();
         previous_t=t.elapsed;
         previous_n=north;previous_e=east;
@@ -160,6 +163,8 @@ int main(int argc,char** argv) {
              <<" dvl_fixes="<<fusion.generator().dvlCount()
              <<" radar_dropouts="<<fusion.generator().missedShoreCount()
              <<" dvl_dropouts="<<fusion.generator().missedDvlCount()
+             <<" water_mode="<<fusion.generator().waterModeCount()
+             <<" radar_range_outliers="<<fusion.generator().radarOutlierCount()
              <<" max_eskf_truth_error_m="<<max_estimation_error
              <<" source=simulated_IMU_radar_bottom_lock_ESKF"
              <<" no_GNSS=true real_sensors=false\n";

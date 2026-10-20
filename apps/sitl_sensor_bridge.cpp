@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iomanip>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <poll.h>
@@ -49,8 +50,15 @@ bool parse(const std::string& line,Truth& t) {
 
 int main(int argc,char** argv) {
     // NEVER attach this fixture to actual radar/INS: it reads SITL physics truth.
-    if(argc!=2 || std::string(argv[1])!="--sitl-sensor-fusion-fixture") {
-        std::cerr<<"Refusing to run without --sitl-sensor-fusion-fixture\n";
+    const bool baseline=(argc==2 &&
+        std::string(argv[1])=="--sitl-sensor-fusion-fixture");
+    const bool blackout=(argc==5 &&
+        std::string(argv[1])=="--sitl-sensor-fusion-fixture" &&
+        std::string(argv[2])=="--radar-blackout" &&
+        std::string(argv[3])=="--hold-marker");
+    if(!baseline && !blackout) {
+        std::cerr<<"Refusing non-SITL call: --sitl-sensor-fusion-fixture "
+                    "[--radar-blackout --hold-marker FILE]\n";
         return 2;
     }
     boat::sitl::TcpMavlinkLink link;
@@ -60,7 +68,14 @@ int main(int argc,char** argv) {
     }
     std::cerr<<"SYNTHETIC_SENSORS_ESKF_CONNECTED target_sysid="<<unsigned(link.systemId())<<"\n";
     std::cerr.flush();
-    boat::fixture::SensorFusion fusion{};
+    boat::fixture::Scenario scenario{};
+    if(blackout) {
+        scenario.radar_dropout_from_s=6.0;
+        scenario.radar_dropout_until_s=500.0;
+        scenario.max_non_gnss_fix_age_s=3.0;
+    }
+    boat::fixture::SensorFusion fusion{scenario};
+    bool hold_marker_written=false;
     std::size_t sent=0;
     std::size_t rejected_odometry=0;
     double max_estimation_error=0.0;
@@ -72,7 +87,8 @@ int main(int argc,char** argv) {
     std::cout<<std::fixed<<std::setprecision(4);
     std::cout<<"time_s,physics_truth_n,physics_truth_e,physics_truth_vn,physics_truth_ve,"
                 "eskf_n,eskf_e,estimate_error_m,odometry_sent,radar_fix,dvl_fix,"
-                "eskf_position_sigma_m,water_track,shore_ranges,shore_inliers\n";
+                "eskf_position_sigma_m,water_track,shore_ranges,shore_inliers,"
+                "raw_unlabeled_echoes,unmatched_echoes,nav_integrity\n";
     while(true) {
         pollfd fd{0,POLLIN,0};
         const int ready=::poll(&fd,1,3000);
@@ -130,7 +146,21 @@ int main(int argc,char** argv) {
         evidence.shore_sensor_independent_of_gnss=true; // GNSS not used
         evidence.gnss_denied=true;
         boat::ValidatedOdometry6D sample{};
-        const bool eligible=boat::sitl::makeOdometry(
+        const bool safe=fusion.integrity();
+        if(blackout && !safe && !hold_marker_written) {
+            std::ofstream marker(argv[4],std::ios::trunc);
+            if(!marker) {
+                std::cerr<<"FAIL: cannot create required SITL HOLD marker\n";
+                return 11;
+            }
+            marker<<"INVALID_NAVIGATION time_s="<<t.elapsed
+                  <<" reason=shore_map_fix_stale\n";
+            marker.close();
+            std::cerr<<"NAVIGATION_INVALID_REQUIRES_HOLD time_s="
+                     <<t.elapsed<<"\n";
+            hold_marker_written=true;
+        }
+        const bool eligible=safe && boat::sitl::makeOdometry(
             estimate,fusion.sensors().imu,t.elapsed,evidence,sample);
         if(!eligible)++rejected_odometry;
         else {
@@ -152,7 +182,10 @@ int main(int argc,char** argv) {
                  <<boat::ins::ErrorStateIns::horizontalSigmaM(estimate)<<','
                  <<int(fusion.sensors().water_track_available)<<','
                  <<fusion.sensors().shore_ranges.count<<','
-                 <<fusion.sensors().range_inliers<<"\n";
+                 <<fusion.sensors().range_inliers<<','
+                 <<fusion.sensors().unlabelled_echoes.count<<','
+                 <<fusion.sensors().unassociated_echoes<<','
+                 <<int(safe)<<"\n";
         std::cout.flush();
         previous_t=t.elapsed;
         previous_n=north;previous_e=east;
@@ -166,8 +199,10 @@ int main(int argc,char** argv) {
              <<" water_mode="<<fusion.generator().waterModeCount()
              <<" radar_range_outliers="<<fusion.generator().radarOutlierCount()
              <<" max_eskf_truth_error_m="<<max_estimation_error
-             <<" source=simulated_IMU_radar_bottom_lock_ESKF"
+             <<" safety_blackout_triggered="<<int(hold_marker_written)
+             <<" source=anonymous_radar_map_association_IMU_DVL_ESKF"
              <<" no_GNSS=true real_sensors=false\n";
     return sent>=10 && fusion.generator().missedShoreCount()>0 &&
-        fusion.generator().missedDvlCount()>0 ? 0:9;
+        (blackout ? hold_marker_written :
+            fusion.generator().missedDvlCount()>0) ? 0:9;
 }

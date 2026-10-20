@@ -10,6 +10,15 @@ if [[ ! -x "$BINARY" ]]; then echo "Missing Rover SITL executable: $BINARY"; exi
 if [[ ! -x "$BRIDGE" ]]; then echo "Missing Boat bridge: $BRIDGE"; exit 2; fi
 
 cleanup() {
+    local status=$?
+    if [[ "$status" -ne 0 ]]; then
+        echo "===== Rover SITL diagnostics ====="
+        cat "$RUN_DIR/rover_sitl.log" 2>/dev/null || true
+        echo "===== SERIAL0 console diagnostics ====="
+        cat "$RUN_DIR/console.log" 2>/dev/null || true
+        echo "===== Bridge diagnostics ====="
+        cat "$RUN_DIR/bridge.log" 2>/dev/null || true
+    fi
     if [[ -n "${CONSOLE_PID:-}" ]]; then kill "$CONSOLE_PID" 2>/dev/null || true; fi
     if [[ -n "${SITL_PID:-}" ]]; then kill "$SITL_PID" 2>/dev/null || true; fi
     wait "${CONSOLE_PID:-}" 2>/dev/null || true

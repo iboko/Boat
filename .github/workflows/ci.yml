@@ -1,0 +1,17 @@
+name: C++ build and tests
+on:
+  push:
+  pull_request:
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Tests
+        run: ctest --test-dir build --output-on-failure
+      - name: Run synthetic mission
+        run: ./build/boat_sim > /tmp/boat_trajectory.csv && test $(wc -l < /tmp/boat_trajectory.csv) -gt 200

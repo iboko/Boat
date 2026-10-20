@@ -17,6 +17,8 @@ jobs:
         run: ctest --test-dir build --output-on-failure
       - name: Run synthetic 2D mission
         run: ./build/boat_sim > /tmp/boat_trajectory.csv && test $(wc -l < /tmp/boat_trajectory.csv) -gt 200
+      - name: Run synthetic 3D INS GNSS-denial experiment
+        run: ./build/boat_ins_demo > /tmp/boat_ins_trajectory.csv && test $(wc -l < /tmp/boat_ins_trajectory.csv) -gt 190
 
   mavlink:
     name: MAVLink2 encoder compatibility

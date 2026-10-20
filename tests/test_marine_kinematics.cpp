@@ -7,7 +7,7 @@ void check(bool ok,const char* why){if(!ok)throw std::runtime_error(why);}
 int main(){
     using namespace boat::marine;
     try {
-        KinematicSurfaceVessel calm;
+        KinematicSurfaceVessel calm({{0,0,0},{0,0,0},1.8,0});
         KinematicSurfaceVessel flowing({{0.4,-0.2,0},{0,0,0},1.8,0});
         KinematicSurfaceVessel windy({{0.4,-0.2,0},{1.5,3.0,0},1.8,0.02});
         calm.initialize(0,{0,0,0},0);

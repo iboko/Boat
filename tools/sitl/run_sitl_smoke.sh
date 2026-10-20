@@ -121,4 +121,4 @@ print("EKF_STATUS_REPORT:",json.dumps(data),flush=True)
 if not data["ekf_state_telemetry_observed"]:
     sys.exit("FAIL: no EKF status + LOCAL_POSITION_NED telemetry")
 PY
-echo "PASS: EKF origin echoed, horizontal EKF telemetry inspected, and ODOMETRY delivered (NOT proof of fusion or mission)"
+echo "PASS: EKF origin echoed, EKF3 explicitly reports using ExternalNav, and horizontal position flags observed (NOT a waypoint mission)"

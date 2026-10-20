@@ -27,7 +27,9 @@ SyntheticSensors::SyntheticSensors(Scenario s):scenario_(s) {
          s.radar_dropout_from_s<=s.radar_dropout_until_s &&
          s.bottom_dropout_from_s<=s.bottom_dropout_until_s &&
          valid(s.accel_bias_mps2)&&valid(s.gyro_bias_radps)&&
-         valid(s.modeled_current_n_mps)&&valid(s.modeled_current_e_mps))) {
+         valid(s.modeled_current_n_mps)&&valid(s.modeled_current_e_mps)&&
+         valid(s.max_non_gnss_fix_age_s)&&s.max_non_gnss_fix_age_s>=1.0&&
+         s.max_non_gnss_fix_age_s<=30.0)) {
         throw std::invalid_argument("invalid synthetic sensor scenario");
     }
 }
@@ -62,11 +64,12 @@ SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
                              scenario_.radar_dropout_until_s)) {
             ++missing_shore_count_;
         } else {
-            // Generate only noisy ranges to surveyed reflectors, NEVER
-            // a completed position fix from the physical truth.
-            result.shore_ranges=ShoreRangeModel::measure(
-                t.position_ned_m,t.time_s,true);
-            if(result.shore_ranges.valid) {
+            // The generator may only output UNLABELED radar ranges.
+            // Landmark association is done against the estimated ESKF pose,
+            // not against physics truth.
+            result.unlabelled_echoes=ShoreMapAssociator::simulateEchoes(
+                t.position_ned_m,t.time_s);
+            if(result.unlabelled_echoes.valid) {
                 ++shore_count_;
                 if(t.time_s>=3.0 && t.time_s<5.0)
                     ++range_outlier_count_;
@@ -103,19 +106,25 @@ SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
     return result;
 }
 
-SensorFusion::SensorFusion(Scenario s):sensors_(s) {}
+SensorFusion::SensorFusion(Scenario s):sensors_(s),
+    max_fix_age_s_(s.max_non_gnss_fix_age_s) {}
 
 bool SensorFusion::step(const PhysicsFrame& truth) {
     latest_=sensors_.observe(truth);
     if(!latest_.valid) {++rejected_steps_;return false;}
     if(first_) {
-        if(!latest_.shore_ranges.valid || !latest_.bottom_track_available) {
+        if(!latest_.unlabelled_echoes.valid || !latest_.bottom_track_available) {
             ++rejected_steps_;
             return false;
         }
         // Only survey datum/vertical position and initial heading come
         // from SITL test initialization. Horizontal position is computed
         // solely by solving raw shoreline reflector ranges.
+        const auto associated=ShoreMapAssociator::associate(
+            latest_.unlabelled_echoes,{0,0,truth.position_ned_m.z});
+        if(!associated.valid){++rejected_steps_;return false;}
+        latest_.shore_ranges=associated.ranges;
+        latest_.unassociated_echoes=associated.unmatched;
         const auto survey=ShoreRangeModel::solve(
             latest_.shore_ranges,{0,0,truth.position_ned_m.z});
         if(!survey.valid) {++rejected_steps_;return false;}
@@ -152,21 +161,30 @@ bool SensorFusion::step(const PhysicsFrame& truth) {
         (void)estimator_.correctGroundVelocity(latest_.bottom_track);
     // Water-track velocity is explicitly NOT passed to correctGroundVelocity.
     // No current estimator exists in this version.
-    if(latest_.shore_ranges.valid) {
-        const auto solution=ShoreRangeModel::solve(
-            latest_.shore_ranges,estimator_.state().position_ned_m);
-        if(solution.valid) {
-            latest_.range_inliers=solution.inliers;
-            latest_.shore_fix={truth.time_s,solution.position_ned_m,
-                0.65,0.85,ins::AbsoluteSource::ShoreRadar,true,true};
-            latest_.shore_fix_available=
-                estimator_.correctPosition(latest_.shore_fix);
+    if(latest_.unlabelled_echoes.valid) {
+        const auto associated=ShoreMapAssociator::associate(
+            latest_.unlabelled_echoes,estimator_.state().position_ned_m);
+        if(associated.valid) {
+            latest_.shore_ranges=associated.ranges;
+            latest_.unassociated_echoes=associated.unmatched;
+            const auto solution=ShoreRangeModel::solve(
+                associated.ranges,estimator_.state().position_ned_m);
+            if(solution.valid) {
+                latest_.range_inliers=solution.inliers;
+                latest_.shore_fix={truth.time_s,solution.position_ned_m,
+                    0.65,0.85,ins::AbsoluteSource::ShoreRadar,true,true};
+                latest_.shore_fix_available=
+                    estimator_.correctPosition(latest_.shore_fix);
+            }
         }
     }
     return true;
 }
 
 bool SensorFusion::integrity() const {
-    return ins::assess(estimator_.state(),estimator_.state().time_s,true).valid;
+    ins::IntegrityPolicy policy{};
+    policy.max_independent_fix_age_during_gnss_denial_s=max_fix_age_s_;
+    return ins::assess(estimator_.state(),estimator_.state().time_s,
+                       true,policy).valid;
 }
 } // namespace boat::fixture

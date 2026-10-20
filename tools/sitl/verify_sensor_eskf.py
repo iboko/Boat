@@ -23,6 +23,9 @@ dvl = [int(r["dvl_fix"]) for r in rows]
 water_track = [int(r["water_track"]) for r in rows]
 shore_ranges = [int(r["shore_ranges"]) for r in rows]
 shore_inliers = [int(r["shore_inliers"]) for r in rows]
+anonymous_echoes = [int(r["raw_unlabeled_echoes"]) for r in rows]
+unmatched_echoes = [int(r["unmatched_echoes"]) for r in rows]
+integrity = [int(r["nav_integrity"]) for r in rows]
 assert all(math.isfinite(v) and v >= 0 for v in errors + sigma)
 assert max(errors) < 3.0, "synthetic C++ ESKF diverged >3m"
 p95 = sorted(errors)[int(0.95 * (len(errors) - 1))]
@@ -34,9 +37,16 @@ assert sum(water_track) > 0, "no water-relative DVL during bottom loss"
 assert all(not (w and d) for w, d in zip(water_track, dvl)), (
     "water-relative velocity was reported together with bottom lock"
 )
-assert all(n == 5 for n, available in zip(shore_ranges, radar) if available), (
-    "shore correction not derived from raw reflector ranges"
+assert all(4 <= n <= 5 for n, available in zip(shore_ranges, radar) if available), (
+    "shore map association did not return valid reflector observations"
 )
+assert all(raw == 5 for raw in anonymous_echoes if raw), (
+    "sensor unexpectedly leaked labelled or incomplete echoes"
+)
+assert sum(unmatched_echoes) > 0 and any(x >= 1 for x in unmatched_echoes), (
+    "false radar echoes never removed during map association"
+)
+assert all(integrity), "unexpected navigation integrity outage on nominal path"
 assert any(i == 4 and available for i, available in zip(shore_inliers, radar)), (
     "radar outlier was not rejected by multilateration"
 )
@@ -85,6 +95,8 @@ summary = {
     "missed_dvl_scheduled": missed_dvl,
     "water_track_measurements_rejected_from_ground_fusion": water_count,
     "surveyed_range_outliers_injected": outlier_count,
+    "unmatched_anonymous_returns":sum(unmatched_echoes),
+    "radar_map_association":"prior-gated anonymous ranges, no labelled echoes",
     "mission_reached": report["mission_reached_events"],
     "ardupilot_ekf_truth_p95_m":
         report["ekf_physics_p95_horizontal_error_m"],

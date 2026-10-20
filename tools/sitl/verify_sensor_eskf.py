@@ -47,7 +47,8 @@ assert any(r == 0 and d == 0 for r, d in zip(radar, dvl)), (
 log = (root / "dynamic_bridge.log").read_text(encoding="utf-8")
 match = re.search(
     r"SITL_SENSOR_ESKF packets=(\d+) blocked=(\d+) radar_fixes=(\d+) "
-    r"dvl_fixes=(\d+) radar_dropouts=(\d+) dvl_dropouts=(\d+)",
+    r"dvl_fixes=(\d+) radar_dropouts=(\d+) dvl_dropouts=(\d+) "
+    r"water_mode=(\d+) radar_range_outliers=(\d+)",
     log)
 assert match, "sensor-ESKF source and diagnostics missing"
 packets, blocked, radar_count, dvl_count, missed_radar, missed_dvl, water_count, outlier_count = map(

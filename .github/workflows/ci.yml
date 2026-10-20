@@ -2,8 +2,10 @@ name: C++ build and tests
 on:
   push:
   pull_request:
+
 jobs:
   native:
+    name: Native C++ and INS tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -13,5 +15,33 @@ jobs:
         run: cmake --build build --parallel 2
       - name: Tests
         run: ctest --test-dir build --output-on-failure
-      - name: Run synthetic mission
+      - name: Run synthetic 2D mission
         run: ./build/boat_sim > /tmp/boat_trajectory.csv && test $(wc -l < /tmp/boat_trajectory.csv) -gt 200
+      - name: Run synthetic 3D INS GNSS-denial experiment
+        run: ./build/boat_ins_demo > /tmp/boat_ins_trajectory.csv && test $(wc -l < /tmp/boat_ins_trajectory.csv) -gt 190
+      - name: Save simulation trajectories
+        uses: actions/upload-artifact@v4
+        with:
+          name: boat-navigation-trajectories
+          path: |
+            /tmp/boat_trajectory.csv
+            /tmp/boat_ins_trajectory.csv
+          retention-days: 30
+
+  mavlink:
+    name: MAVLink2 encoder compatibility
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout MAVLink C headers
+        uses: actions/checkout@v4
+        with:
+          repository: mavlink/c_library_v2
+          path: mavlink_headers
+          persist-credentials: false
+      - name: Configure MAVLink build
+        run: cmake -S . -B build-mavlink -DCMAKE_BUILD_TYPE=Release -DBOAT_WITH_MAVLINK=ON -DBOAT_MAVLINK_INCLUDE_DIR="$GITHUB_WORKSPACE/mavlink_headers"
+      - name: Compile all
+        run: cmake --build build-mavlink --parallel 2
+      - name: Decode test and regression tests
+        run: ctest --test-dir build-mavlink --output-on-failure

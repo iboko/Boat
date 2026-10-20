@@ -23,6 +23,9 @@ if(BOAT_WITH_MAVLINK)
   target_include_directories(boat_core PRIVATE "${BOAT_MAVLINK_INCLUDE_DIR}")
 endif()
 
+add_executable(boat_ins_demo apps/ins_demo.cpp)
+target_link_libraries(boat_ins_demo PRIVATE boat_core)
+
 add_executable(boat_sim apps/sim_main.cpp)
 target_link_libraries(boat_sim PRIVATE boat_core)
 enable_testing()

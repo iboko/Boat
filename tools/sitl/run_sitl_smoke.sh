@@ -36,7 +36,7 @@ trap cleanup EXIT
 echo "Launching official ArduRover SITL binary (no arming, no waypoints)"
 (
     cd "$RUN_DIR"
-    stdbuf -oL -eL "$BINARY" --model boat --home=-35.363261,149.165230,584,0 \
+    stdbuf -oL -eL "$BINARY" --model rover --home=-35.363261,149.165230,584,0 \
         --defaults="$ROOT/tools/sitl/rover_nogps.parm" --wipe \
         > "$RUN_DIR/rover_sitl.log" 2>&1
 ) &

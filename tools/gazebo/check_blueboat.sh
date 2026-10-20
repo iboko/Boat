@@ -9,6 +9,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SITL_MODELS_ROOT="${SITL_MODELS_ROOT:-$HOME/SITL_Models}"
 ASV_WAVE_SIM_ROOT="${ASV_WAVE_SIM_ROOT:-$HOME/asv_wave_sim}"
 ARDUPILOT_GAZEBO_BUILD="${ARDUPILOT_GAZEBO_BUILD:-$HOME/ardupilot_gazebo/build}"
+ASV_WAVE_SIM_PLUGIN_DIR="${ASV_WAVE_SIM_PLUGIN_DIR:-$ASV_WAVE_SIM_ROOT/build}"
 WAVES_WORLD="$ASV_WAVE_SIM_ROOT/gz-waves-models/worlds/waves.sdf"
 BLUEBOAT_MODEL="$SITL_MODELS_ROOT/Gazebo/models/blueboat/model.sdf"
 for cmd in gz python3; do
@@ -21,6 +22,17 @@ if ! find "$ARDUPILOT_GAZEBO_BUILD" -maxdepth 2 -type f \( -name '*.so' -o -name
   echo "No compiled Gazebo plugin shared libraries: $ARDUPILOT_GAZEBO_BUILD" >&2
   exit 1
 fi
+[[ -d "$ASV_WAVE_SIM_PLUGIN_DIR" ]] || {
+  echo "Missing ASV Wave Sim compiled hydrodynamics plugin directory" >&2; exit 1;
+}
+if ! find "$ASV_WAVE_SIM_PLUGIN_DIR" -maxdepth 6 -type f -name '*hydrodynamics*.so' | grep -q .; then
+  echo "No compiled ASV Wave Sim hydrodynamics shared library was found" >&2
+  exit 1
+fi
+grep -q 'gz-waves1-hydrodynamics-system' "$BLUEBOAT_MODEL" || {
+  echo "BlueBoat model does not reference expected wave hydrodynamics plugin" >&2
+  exit 1
+}
 OUTPUT="${BLUEBOAT_PREPARED_WORLD:-$ROOT/build-blueboat/waves_with_blueboat.sdf}"
 python3 "$ROOT/tools/gazebo/prepare_blueboat_world.py" \
   --upstream-world "$WAVES_WORLD" --output "$OUTPUT"

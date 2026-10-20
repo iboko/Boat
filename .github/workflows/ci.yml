@@ -83,6 +83,12 @@ jobs:
           bash tools/sitl/run_sitl_dynamic.sh
       - name: Verify sensor-ESKF output, outages and route completion
         run: python3 tools/sitl/verify_sensor_eskf.py sitl-sensor-output
+      - name: Prove navigation-integrity failure forces HOLD in Rover AUTO
+        run: |
+          BOAT_DYNAMIC_BRIDGE_BINARY="$GITHUB_WORKSPACE/build-mavlink/boat_sitl_sensor" \
+          BOAT_DYNAMIC_MODE=sensor-blackout \
+          RUN_DIR="$GITHUB_WORKSPACE/sitl-blackout-output" \
+          bash tools/sitl/run_sitl_dynamic.sh
       - name: Upload ArduRover logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -102,4 +108,8 @@ jobs:
             sitl-sensor-output/*.log
             sitl-sensor-output/*.csv
             sitl-sensor-output/*.json
+            sitl-blackout-output/*.log
+            sitl-blackout-output/*.json
+            sitl-blackout-output/*.csv
+            sitl-blackout-output/navigation_integrity_failed.txt
           retention-days: 30

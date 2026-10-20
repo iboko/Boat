@@ -28,7 +28,7 @@ def require(condition, message):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sitl-only", action="store_true")
-    parser.add_argument("--bridge-mode",choices=("direct-truth","sensor-eskf"),default="direct-truth")
+    parser.add_argument("--bridge-mode",choices=("direct-truth","sensor-eskf","sensor-blackout"),default="direct-truth")
     parser.add_argument("--duration", type=int, default=135)
     parser.add_argument("--cpp-bridge", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -111,6 +111,10 @@ def main():
     previous_truth=None
     bridge = None
     bridge_stderr = None
+    marker=out/"navigation_integrity_failed.txt"
+    hold_requested_at=None
+    hold_confirmed_at=None
+    hold_request_sent=False
     report_path = out / "dynamic_mission_report.json"
     csv_file = (out / "dynamic_sitl_truth.csv").open("w", newline="", encoding="utf-8")
     writer = csv.writer(csv_file)
@@ -123,8 +127,17 @@ def main():
     result={}
     failure=None
     try:
+        bridge_args=[str(args.cpp_bridge.resolve())]
+        if args.bridge_mode=="direct-truth":
+            bridge_args.append("--sitl-dynamic-fixture")
+        else:
+            bridge_args.append("--sitl-sensor-fusion-fixture")
+            if args.bridge_mode=="sensor-blackout":
+                marker.unlink(missing_ok=True)
+                bridge_args.extend(["--radar-blackout","--hold-marker",
+                                    str(marker.resolve())])
         bridge=subprocess.Popen(
-            [str(args.cpp_bridge.resolve()), "--sitl-sensor-fusion-fixture" if args.bridge_mode=="sensor-eskf" else "--sitl-dynamic-fixture"],
+            bridge_args,
             stdin=subprocess.PIPE, stdout=bridge_stdout, stderr=bridge_stderr,
             text=True, bufsize=1)
         require(bridge.stdin is not None, "bridge stdin not available")
@@ -137,6 +150,17 @@ def main():
             except (OSError, ConnectionError) as exc:
                 raise RuntimeError("MAVLink SITL disconnected") from exc
             now=time.monotonic()
+            if args.bridge_mode=="sensor-blackout" and marker.is_file() and not hold_request_sent:
+                require(ever_armed and ever_auto,
+                        "integrity violation occurred before armed AUTO")
+                require(marker.read_text().startswith("INVALID_NAVIGATION"),
+                        "invalid C++ navigation integrity report")
+                link.set_mode("HOLD")
+                hold_request_sent=True
+                hold_requested_at=now
+                print("SITL_NAVIGATION_FAILSAFE_HOLD_REQUESTED",flush=True)
+            if hold_request_sent and hold_confirmed_at is None and now-hold_requested_at>6.0:
+                raise RuntimeError("SITL did not acknowledge HOLD after navigation integrity loss")
             if msg is None:
                 if begun is not None and now-last_truth_monotonic>2.0:
                     raise RuntimeError("physical truth stream lost >2 seconds")
@@ -162,6 +186,10 @@ def main():
                 mode_auto = bool((msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED) and int(msg.custom_mode)==10)
                 ever_armed = ever_armed or armed
                 ever_auto = ever_auto or mode_auto
+                if hold_request_sent and int(msg.custom_mode)==4 and not mode_auto:
+                    hold_confirmed_at=now
+                    print("SITL_NAVIGATION_FAILSAFE_HOLD_CONFIRMED",flush=True)
+                    break
             elif typ=="SIM_STATE":
                 lat_int=int(getattr(msg,"lat_int",0))
                 lon_int=int(getattr(msg,"lon_int",0))
@@ -221,7 +249,7 @@ def main():
                     command_at=now  # confirmation requires HEARTBEAT, not the request itself
                 if command_sent and not ever_armed and now-command_at>25.0:
                     raise RuntimeError("ordinary arming not confirmed; status: "+str(statuses[-10:]))
-                if max_dist_from_start>15.0 and all(x<2.5 for x in closest[1:]) and (len(targets)-1) in reached and ever_armed and ever_auto:
+                if args.bridge_mode!="sensor-blackout" and max_dist_from_start>15.0 and all(x<2.5 for x in closest[1:]) and (len(targets)-1) in reached and ever_armed and ever_auto:
                     print("SITL_DYNAMIC_PHYSICS_WAYPOINTS_VISITED",flush=True)
                     break
             if bridge and bridge.poll() is not None:
@@ -230,6 +258,10 @@ def main():
         result={
             "fixture":("SITL physics truth -> simulated noisy IMU/shore radar/bottom DVL -> C++ 15-state ESKF -> MAVLink" if args.bridge_mode=="sensor-eskf" else "SITL physics truth -> C++ synthetic ODOMETRY"),
             "bridge_mode":args.bridge_mode,
+            "hold_request_sent":hold_request_sent,
+            "hold_confirmed":hold_confirmed_at is not None,
+            "hold_latency_s":(round(hold_confirmed_at-hold_requested_at,3) if hold_confirmed_at is not None else None),
+            "integrity_marker_observed":marker.is_file() if args.bridge_mode=="sensor-blackout" else False,
             "gnss_from_ardupilot_parameters":"disabled in separate origin probe",
             "mission_loaded_and_readback":True,
             "mission_executed": bool(max_dist_from_start>15.0 and ever_armed and ever_auto),
@@ -250,23 +282,38 @@ def main():
         require(warm_samples>=30,"too few dynamic truth samples")
         require(ever_armed and ever_auto,"Rover heartbeat did not confirm armed AUTO mode")
         require(len(truth_ekf_errors)>=20,"no paired EKF/physics trajectory measurements")
-        if args.bridge_mode=="sensor-eskf":
-            p95=sorted(truth_ekf_errors)[int(0.95*(len(truth_ekf_errors)-1))]
-            require(p95<5.0, f"ESKF SITL P95 position error too large: {p95:.2f} m")
-        require(max_dist_from_start>15.0,
-                "no real vehicle movement seen in SITL physical truth")
-        require(all(x<2.5 for x in closest[1:]),
-                "physical truth did not pass within 2.5m of each waypoint")
-        require((len(targets)-1) in reached,
-                "ArduPilot did not confirm last waypoint reached")
-        result["pass"]=True
-        print("SITL_DYNAMIC_ROUTE_PASS "+json.dumps({
-            "samples":warm_samples,
-            "max_displacement_m":round(max_dist_from_start,2),
-            "closest_m":result["closest_true_distance_to_route_m"],
-            "mission_reached_events":sorted(reached),
-            "ekf_physics_p95_m":result["ekf_physics_p95_horizontal_error_m"]}),
-              flush=True)
+        if args.bridge_mode=="sensor-blackout":
+            require(hold_request_sent and hold_confirmed_at is not None,
+                    "loss of position did not move Rover into HOLD")
+            require(hold_confirmed_at-hold_requested_at<=6.0,
+                    "HOLD response exceeded 6 seconds")
+            require((len(targets)-1) not in reached,
+                    "mission finished before required navigation safety interruption")
+            require(max_dist_from_start>0.5,
+                    "vehicle never moved before safety test")
+            result["pass"]=True
+            print("SITL_BLACKOUT_HOLD_PASS "+json.dumps({
+                "latency_s":result["hold_latency_s"],
+                "moved_m":round(max_dist_from_start,2),
+                "reached_before_hold":sorted(reached)}),flush=True)
+        else:
+            if args.bridge_mode=="sensor-eskf":
+                p95=sorted(truth_ekf_errors)[int(0.95*(len(truth_ekf_errors)-1))]
+                require(p95<5.0, f"ESKF SITL P95 position error too large: {p95:.2f} m")
+            require(max_dist_from_start>15.0,
+                    "no real vehicle movement seen in SITL physical truth")
+            require(all(x<2.5 for x in closest[1:]),
+                    "physical truth did not pass within 2.5m of each waypoint")
+            require((len(targets)-1) in reached,
+                    "ArduPilot did not confirm last waypoint reached")
+            result["pass"]=True
+            print("SITL_DYNAMIC_ROUTE_PASS "+json.dumps({
+                "samples":warm_samples,
+                "max_displacement_m":round(max_dist_from_start,2),
+                "closest_m":result["closest_true_distance_to_route_m"],
+                "mission_reached_events":sorted(reached),
+                "ekf_physics_p95_m":result["ekf_physics_p95_horizontal_error_m"]}),
+                  flush=True)
     except Exception as exc:
         failure=str(exc)
         result["pass"]=False

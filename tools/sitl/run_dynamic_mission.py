@@ -45,6 +45,28 @@ def main():
     require(not hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED,
             "vehicle already armed before test")
 
+    # Reject any non-SITL target BEFORE sending MISSION_CLEAR_ALL or ARM.
+    # A loopback URL and the user's --sitl-only flag alone are insufficient.
+    sim_id = mavutil.mavlink.MAVLINK_MSG_ID_SIM_STATE
+    link.mav.command_long_send(link.target_system, link.target_component,
+        mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
+        sim_id, 100000, 0, 0, 0, 0, 0)
+    physics_proof = False
+    proof_deadline = time.monotonic()+10.0
+    while time.monotonic()<proof_deadline:
+        proof=link.recv_match(type="SIM_STATE",blocking=True,timeout=0.35)
+        if proof is None:
+            continue
+        lat_int=int(getattr(proof,"lat_int",0))
+        lon_int=int(getattr(proof,"lon_int",0))
+        if (lat_int and lon_int and
+            abs(lat_int*1e-7-HOME_LAT)<0.0005 and
+            abs(lon_int*1e-7-HOME_LON)<0.0005):
+            physics_proof=True
+            break
+    require(physics_proof, "refusing any mission mutation: SITL physical truth not verified")
+    print("SITL_PHYSICS_PROOF_BEFORE_MISSION_MUTATION",flush=True)
+
     uploaded = upload_and_verify(link)
     require(uploaded["mission_readback_verified"], "mission readback not confirmed")
     print("SITL_DYNAMIC_MISSION_UPLOADED", flush=True)

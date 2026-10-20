@@ -63,6 +63,8 @@ jobs:
           cmake -S . -B build-mavlink -DCMAKE_BUILD_TYPE=Release -DBOAT_WITH_MAVLINK=ON -DBOAT_MAVLINK_INCLUDE_DIR="$GITHUB_WORKSPACE/mavlink_headers"
           cmake --build build-mavlink --parallel 2
           ctest --test-dir build-mavlink --output-on-failure
+      - name: Install telemetry auditor (test-only Python dependency)
+        run: python3 -m pip install --disable-pip-version-check --user "pymavlink>=2.4,<2.5"
       - name: Download official prebuilt ArduRover SITL binary
         run: |
           mkdir -p sitl-smoke-output
@@ -78,5 +80,6 @@ jobs:
           name: boat-ardurover-sitl-smoke
           path: |
             sitl-smoke-output/*.log
+            sitl-smoke-output/parameters.json
             sitl-smoke-output/ardurover-git-version.txt
           retention-days: 30

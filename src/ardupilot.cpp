@@ -1,6 +1,8 @@
 #include "boat/ardupilot.hpp"
+#include "boat/ins.hpp"
 
 #include <cmath>
+#include <limits>
 
 #ifdef BOAT_WITH_MAVLINK
 #include <common/mavlink.h>
@@ -32,7 +34,7 @@ std::vector<std::uint8_t> ArduPilotOdometryEncoder::encode(
     // ArduPilot supports BODY_FRD and LOCAL_FRD for external ODOMETRY.
     // LOCAL_FRD origin MUST have fixed N/E/D alignment on this project.
     odom.frame_id = MAV_FRAME_LOCAL_FRD;
-    odom.child_frame_id = MAV_FRAME_LOCAL_FRD;
+    odom.child_frame_id = MAV_FRAME_BODY_FRD;
     odom.x = static_cast<float>(s.north_m);
     odom.y = static_cast<float>(s.east_m);
     odom.z = static_cast<float>(s.down_m);
@@ -43,9 +45,13 @@ std::vector<std::uint8_t> ArduPilotOdometryEncoder::encode(
     odom.q[1] = static_cast<float>(sr * cp * cy - cr * sp * sy);
     odom.q[2] = static_cast<float>(cr * sp * cy + sr * cp * sy);
     odom.q[3] = static_cast<float>(cr * cp * sy - sr * sp * cy);
-    odom.vx = static_cast<float>(s.north_mps);
-    odom.vy = static_cast<float>(s.east_mps);
-    odom.vz = static_cast<float>(s.down_mps);
+    // Twist is expressed in BODY_FRD. Convert NED linear velocity to body axes.
+    const ins::Quaternion attitude{odom.q[0],odom.q[1],odom.q[2],odom.q[3]};
+    const ins::Vec3 body_velocity =
+        ins::rotateInverse(attitude,{s.north_mps,s.east_mps,s.down_mps});
+    odom.vx = static_cast<float>(body_velocity.x);
+    odom.vy = static_cast<float>(body_velocity.y);
+    odom.vz = static_cast<float>(body_velocity.z);
     odom.rollspeed = static_cast<float>(s.roll_rate_radps);
     odom.pitchspeed = static_cast<float>(s.pitch_rate_radps);
     odom.yawspeed = static_cast<float>(s.yaw_rate_radps);
@@ -57,6 +63,8 @@ std::vector<std::uint8_t> ArduPilotOdometryEncoder::encode(
     odom.pose_covariance[15] = avar;
     odom.pose_covariance[18] = avar;
     odom.pose_covariance[20] = avar;
+    odom.velocity_covariance[0] = std::numeric_limits<float>::quiet_NaN();
+    odom.estimator_type = MAV_ESTIMATOR_TYPE_UNKNOWN;
     odom.reset_counter = s.reset_counter;
     odom.quality = static_cast<std::int8_t>(s.quality);
     mavlink_message_t msg{};

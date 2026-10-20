@@ -136,7 +136,7 @@ observations = {"ekf_samples": 0, "local_position_samples": 0,
                 "last_local_position": None,
                 "status_text": [],
                 "origin_set_confirmed": True}
-stop = time.monotonic() + 24.0
+stop = time.monotonic() + (float(sys.argv[3]) if len(sys.argv)>3 else 24.0)
 while time.monotonic() < stop:
     try:
         msg = link.recv_match(blocking=True, timeout=0.5)

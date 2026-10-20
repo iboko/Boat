@@ -1,5 +1,6 @@
 #pragma once
 #include "boat/ins.hpp"
+#include "boat/shore_ranges.hpp"
 
 namespace boat::fixture {
 
@@ -16,7 +17,11 @@ struct PhysicsFrame {
 struct SensorSet {
     ins::ImuSample imu{};
     ins::AbsoluteFix shore_fix{};
+    ShoreRanges shore_ranges{};
+    unsigned range_inliers{};
     ins::GroundVelocity bottom_track{};
+    ins::GroundVelocity water_track{};
+    bool water_track_available{false};
     bool shore_fix_available{false};
     bool bottom_track_available{false};
     bool valid{false};
@@ -31,6 +36,8 @@ struct Scenario {
     double bottom_dropout_until_s{13.0};
     double accel_bias_mps2{0.012};
     double gyro_bias_radps{0.0007};
+    double modeled_current_n_mps{0.35};
+    double modeled_current_e_mps{-0.20};
 };
 
 class SyntheticSensors {
@@ -42,6 +49,8 @@ public:
     unsigned dvlCount() const { return dvl_count_; }
     unsigned missedShoreCount() const { return missing_shore_count_; }
     unsigned missedDvlCount() const { return missing_dvl_count_; }
+    unsigned waterModeCount() const { return water_mode_count_; }
+    unsigned radarOutlierCount() const { return range_outlier_count_; }
 
 private:
     Scenario scenario_{};
@@ -51,6 +60,7 @@ private:
     bool initialized_{false};
     unsigned shore_count_{0}, dvl_count_{0};
     unsigned missing_shore_count_{0}, missing_dvl_count_{0};
+    unsigned water_mode_count_{0}, range_outlier_count_{0};
 };
 
 // Interface accepts no GNSS input. First fix/attitude are synthetic

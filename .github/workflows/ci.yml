@@ -32,6 +32,10 @@ jobs:
           name: boat-marine-surrogate-v010
           path: marine-output/
           retention-days: 30
+      - name: Validate Gazebo BlueBoat wave-world preparation without running Gazebo
+        run: |
+          python3 tools/gazebo/test_prepare_blueboat_world.py
+          bash -n tools/gazebo/check_blueboat.sh
       - name: Save simulation trajectories
         uses: actions/upload-artifact@v4
         with:

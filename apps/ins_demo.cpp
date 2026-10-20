@@ -1,5 +1,6 @@
 #include "boat/ins.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <iostream>

@@ -19,6 +19,23 @@ jobs:
         run: ./build/boat_sim > /tmp/boat_trajectory.csv && test $(wc -l < /tmp/boat_trajectory.csv) -gt 200
       - name: Run synthetic 3D INS GNSS-denial experiment
         run: ./build/boat_ins_demo > /tmp/boat_ins_trajectory.csv && test $(wc -l < /tmp/boat_ins_trajectory.csv) -gt 190
+      - name: Simulate 3DOF marine route and current-driven drift after navigation loss
+        run: |
+          mkdir -p marine-output
+          ./build/boat_marine_validation --sitl-only-marine-surrogate route marine-output/marine_route.csv | tee marine-output/marine_route.log
+          ./build/boat_marine_validation --sitl-only-marine-surrogate blackout marine-output/marine_blackout.csv | tee marine-output/marine_blackout.log
+          python3 tools/marine/validate_marine_csv.py marine-output
+      - name: Upload standalone marine model evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boat-marine-surrogate-v010
+          path: marine-output/
+          retention-days: 30
+      - name: Validate Gazebo BlueBoat wave-world preparation without running Gazebo
+        run: |
+          python3 tools/gazebo/test_prepare_blueboat_world.py
+          bash -n tools/gazebo/check_blueboat.sh
       - name: Save simulation trajectories
         uses: actions/upload-artifact@v4
         with:

@@ -273,6 +273,32 @@ bool ErrorStateIns::correctGroundVelocity(const GroundVelocity& v) {
                               squared(v.vertical_sigma_mps)},3,cfg_.max_velocity_nis);
 }
 
+bool ErrorStateIns::correctAttitude(const AbsoluteAttitude& a) {
+    if(!state_.initialized || !state_.origin_fixed_and_aligned ||
+       !a.valid || !a.independently_measured ||
+       !finite(a.time_s) || !finite(a.body_to_ned) ||
+       !finite(a.angular_sigma_rad) ||
+       a.angular_sigma_rad <= 0.0 || a.angular_sigma_rad > 1.0 ||
+       std::abs(a.time_s-state_.time_s)>cfg_.max_measurement_age_s)
+        return false;
+    // Right-invariant attitude residual in the local FRD error coordinates.
+    // The nominal orientation is never directly replaced with the observation.
+    const Quaternion estimate=state_.body_to_ned;
+    const Quaternion conjugate{estimate.w,-estimate.x,-estimate.y,-estimate.z};
+    Quaternion difference=normalize(multiply(conjugate,
+                                              normalize(a.body_to_ned)));
+    if(difference.w<0.0)
+        difference={-difference.w,-difference.x,-difference.y,-difference.z};
+    const Vec3 imaginary{difference.x,difference.y,difference.z};
+    const double sine=norm(imaginary);
+    const double angle=2.0*std::atan2(sine,difference.w);
+    const Vec3 residual=sine>1.e-12 ?
+        imaginary*(angle/sine) : imaginary*2.0;
+    const double variance=squared(a.angular_sigma_rad);
+    return measurementUpdate(residual,{variance,variance,variance},
+                             6,cfg_.max_attitude_nis);
+}
+
 double ErrorStateIns::horizontalSigmaM(const State& s) {
     const double a=cell(s.covariance,0,0), b=cell(s.covariance,0,1), c=cell(s.covariance,1,1);
     const double lambda=0.5*(a+c+std::sqrt(squared(a-c)+4.0*squared(b)));

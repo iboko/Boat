@@ -1,5 +1,6 @@
 #include "boat/sensor_fixture.hpp"
 #include <cmath>
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 static void demand(bool condition,const char* why){

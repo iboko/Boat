@@ -29,6 +29,17 @@ if ! find -L "$ASV_WAVE_SIM_PLUGIN_DIR" -maxdepth 6 -type f -name '*hydrodynamic
   echo "No compiled ASV Wave Sim hydrodynamics shared library was found" >&2
   exit 1
 fi
+# The simulation may find the plugin itself but fail to resolve its
+# transitive libgz-waves1.so.1 dependency. Reject that before any test run.
+WAVES_HYDRO_PLUGIN="$(find -L "$ASV_WAVE_SIM_PLUGIN_DIR" -maxdepth 6 \
+  -type f -name '*hydrodynamics*.so' -print -quit)"
+WAVES_DEPS="$(LD_LIBRARY_PATH="$ASV_WAVE_SIM_PLUGIN_DIR:${LD_LIBRARY_PATH:-}" \
+  ldd "$WAVES_HYDRO_PLUGIN")"
+if printf '%s\\n' "$WAVES_DEPS" | grep -q 'not found'; then
+  printf '%s\\n' "$WAVES_DEPS" >&2
+  echo "Unresolved Wave Sim runtime dependency; refusing to run" >&2
+  exit 1
+fi
 grep -q 'gz-waves1-hydrodynamics-system' "$BLUEBOAT_MODEL" || {
   echo "BlueBoat model does not reference expected wave hydrodynamics plugin" >&2
   exit 1

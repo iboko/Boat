@@ -37,6 +37,10 @@ jobs:
           sudo apt-get install -y gz-harmonic libgz-sim8-dev rapidjson-dev \
             libcgal-dev libfftw3-dev libboost-all-dev \
             cmake build-essential pkg-config python3-pip
+          # Official ArduPilot Gazebo plugin needs OpenCV/GStreamer headers even
+          # when we execute only the headless physics server.
+          sudo apt-get install -y libunwind-dev
+          sudo apt-get install -y libopencv-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
           python3 -m pip install --user --disable-pip-version-check colcon-common-extensions
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           gz sim --versions

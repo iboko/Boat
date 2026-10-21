@@ -43,6 +43,15 @@ with tempfile.TemporaryDirectory() as directory:
             "mission_reached_events":[1]}
     report=assess(truth,outage,"hold",20)
     assert report["hold_drift_m"]>5
+    # Regression: Gazebo previously let the boat free-fall without hydrodynamics.
+    sinking = [dict(row) for row in rows]
+    sinking[10]["z"]=-540.0
+    path.write_text("\n".join(json.dumps(r) for r in sinking)+"\n")
+    try:
+        load_truth(path)
+        raise AssertionError("sinking BlueBoat accepted as valid marine physics")
+    except ValueError:
+        pass
     for bad in ([],[{"monotonic_s":1,"x":0,"y":0,"z":0,"source":"Rover SIM_STATE"}]):
         path.write_text("\n".join(json.dumps(r) for r in bad))
         try:

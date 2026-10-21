@@ -107,7 +107,7 @@ jobs:
       - name: Execute actual Gazebo BlueBoat radar outage and physical drift after HOLD
         working-directory: Boat
         run: |
-          BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output" \
+          BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output/hold" \
           bash tools/gazebo/run_blueboat_auto.sh --sitl-only hold
       - name: Preserve genuine Gazebo physics reports even on failure
         if: always()

@@ -134,6 +134,7 @@ def main():
     truth_ekf_errors = []
     last_truth = None
     last_truth_monotonic = None
+    last_ardupilot_boot_ms = None
     start = time.monotonic()
     begun = None
     last_publish = 0.0
@@ -197,6 +198,12 @@ def main():
                 continue
             typ=msg.get_type()
             if typ=="LOCAL_POSITION_NED":
+                # Gazebo JSON lockstep can run slower than wall time.
+                # AP_Arming requires 10 seconds of consistent dual IMUs
+                # on the firmware's own monotonic simulated clock.
+                boot_ms = int(msg.time_boot_ms)
+                if boot_ms >= 0:
+                    last_ardupilot_boot_ms = boot_ms
                 last_ekf=(float(msg.x),float(msg.y))
                 if last_truth is not None and last_truth_monotonic is not None and now-last_truth_monotonic<0.3:
                     truth_ekf_errors.append(math.hypot(last_ekf[0]-last_truth[0],last_ekf[1]-last_truth[1]))
@@ -267,7 +274,13 @@ def main():
                         nav_seq,round(max_dist_from_start,3),
                         *[round(x,3) for x in closest[1:]],
                     ])
-                if not command_sent and warm_samples>=25 and now-start>4.0:
+                clock_ready = (args.gazebo_truth_file is None or
+                    (last_ardupilot_boot_ms is not None and
+                     last_ardupilot_boot_ms >= 25000))
+                if not command_sent and warm_samples>=25 and now-start>4.0 and clock_ready:
+                    if args.gazebo_truth_file is not None:
+                        print("BLUEBOAT_IMU_25_SIMSECONDS_BEFORE_ARM boot_ms="+
+                              str(last_ardupilot_boot_ms),flush=True)
                     link.set_mode("AUTO")
                     # Valid, non-forced arming command. No altered safety checks.
                     link.mav.command_long_send(link.target_system,
@@ -293,6 +306,7 @@ def main():
             "hold_confirmed_monotonic_s":hold_confirmed_at,
             "hold_requested_monotonic_s":hold_requested_at,
             "gazebo_verified_before_arm":args.gazebo_truth_file is not None,
+            "ardupilot_boot_ms_before_arm":last_ardupilot_boot_ms,
             "hold_latency_s":(round(hold_confirmed_at-hold_requested_at,3) if hold_confirmed_at is not None else None),
             "integrity_marker_observed":marker.is_file() if args.bridge_mode=="sensor-blackout" else False,
             "gnss_from_ardupilot_parameters":"disabled in separate origin probe",

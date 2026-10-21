@@ -146,6 +146,7 @@ def main():
     hold_requested_at=None
     hold_confirmed_at=None
     hold_request_sent=False
+    radar_blackout_command_sent=False
     report_path = out / "dynamic_mission_report.json"
     csv_file = (out / "dynamic_sitl_truth.csv").open("w", newline="", encoding="utf-8")
     writer = csv.writer(csv_file)
@@ -223,6 +224,14 @@ def main():
                 mode_auto = bool((msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED) and int(msg.custom_mode)==10)
                 ever_armed = ever_armed or armed
                 ever_auto = ever_auto or mode_auto
+                if (args.bridge_mode=="sensor-blackout" and
+                    armed and mode_auto and not radar_blackout_command_sent):
+                    require(bridge is not None and bridge.stdin is not None,
+                            "C++ bridge unavailable at confirmed armed AUTO")
+                    bridge.stdin.write("RADAR_BLACKOUT\n")
+                    bridge.stdin.flush()
+                    radar_blackout_command_sent=True
+                    print("SITL_POST_ARM_RADAR_BLACKOUT_ACTIVATED",flush=True)
                 if hold_request_sent and int(msg.custom_mode)==4 and not mode_auto:
                     hold_confirmed_at=now
                     print("SITL_NAVIGATION_FAILSAFE_HOLD_CONFIRMED",flush=True)
@@ -309,6 +318,7 @@ def main():
             "ardupilot_boot_ms_before_arm":last_ardupilot_boot_ms,
             "hold_latency_s":(round(hold_confirmed_at-hold_requested_at,3) if hold_confirmed_at is not None else None),
             "integrity_marker_observed":marker.is_file() if args.bridge_mode=="sensor-blackout" else False,
+            "radar_blackout_after_armed_auto":radar_blackout_command_sent,
             "gnss_from_ardupilot_parameters":"disabled in separate origin probe",
             "mission_loaded_and_readback":True,
             "mission_executed": bool(max_dist_from_start>15.0 and ever_armed and ever_auto),
@@ -330,6 +340,8 @@ def main():
         require(ever_armed and ever_auto,"Rover heartbeat did not confirm armed AUTO mode")
         require(len(truth_ekf_errors)>=20,"no paired EKF/physics trajectory measurements")
         if args.bridge_mode=="sensor-blackout":
+            require(radar_blackout_command_sent,
+                    "no armed AUTO confirmation before triggering synthetic radar loss")
             require(hold_request_sent and hold_confirmed_at is not None,
                     "loss of position did not move Rover into HOLD")
             require(hold_confirmed_at-hold_requested_at<=6.0,

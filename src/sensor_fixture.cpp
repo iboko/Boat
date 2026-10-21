@@ -34,6 +34,13 @@ SyntheticSensors::SyntheticSensors(Scenario s):scenario_(s) {
     }
 }
 
+void SyntheticSensors::beginRadarBlackoutAfter(double now_s, double delay_s) {
+    if(!valid(now_s) || !valid(delay_s) || delay_s<0 || delay_s>30.0)
+        throw std::invalid_argument("invalid armed radar blackout trigger");
+    scenario_.radar_dropout_from_s=now_s+delay_s;
+    scenario_.radar_dropout_until_s=std::max(500.0,now_s+delay_s+60.0);
+}
+
 SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
     SensorSet result{};
     if(!valid(t.time_s)||!valid(t.position_ned_m)||
@@ -210,6 +217,12 @@ bool SensorFusion::step(const PhysicsFrame& truth) {
             }
         }
     }
+    return true;
+}
+
+bool SensorFusion::beginRadarBlackoutAfterArm() {
+    if(first_ || !estimator_.state().initialized) return false;
+    sensors_.beginRadarBlackoutAfter(estimator_.state().time_s,6.0);
     return true;
 }
 

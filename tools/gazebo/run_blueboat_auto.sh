@@ -81,7 +81,7 @@ done
 ) > "$OUT/rover.log" 2>&1 &
 ROVER_PID=$!
 python3 "$ROOT/tools/gazebo/gazebo_truth_monitor.py" \
-  --seconds 240 --output "$OUT/gazebo_blueboat_truth.jsonl" \
+  --seconds 420 --output "$OUT/gazebo_blueboat_truth.jsonl" \
   > "$OUT/truth.log" 2>&1 &
 TRUTH_PID=$!
 python3 - "$OUT/gazebo_blueboat_truth.jsonl" <<'PY'
@@ -128,7 +128,7 @@ else
   BRIDGE_MODE="sensor-eskf"
 fi
 python3 "$ROOT/tools/sitl/run_dynamic_mission.py" \
-  --sitl-only --bridge-mode "$BRIDGE_MODE" --duration 145 \
+  --sitl-only --bridge-mode "$BRIDGE_MODE" --duration 220 \
   --gazebo-truth-file "$OUT/gazebo_blueboat_truth.jsonl" \
   --cpp-bridge "$SENSOR_BRIDGE" --output-dir "$OUT" \
   | tee "$OUT/mission.log"

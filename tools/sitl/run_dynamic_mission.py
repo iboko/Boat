@@ -94,7 +94,11 @@ def main():
                 "refusing mission mutation: actual live Gazebo BlueBoat world poses absent")
         print("GAZEBO_BLUEBOAT_PHYSICS_PROOF_BEFORE_MISSION_MUTATION",flush=True)
 
-    uploaded = upload_and_verify(link)
+    # In a floating-body Gazebo world HOME is sampled from the actual model
+    # and may differ centimetres from the configured origin. Route waypoints
+    # 1/2/3 retain the original strict ±2e-7-degree readback tolerance.
+    home_tolerance=20 if args.gazebo_truth_file is not None else 2
+    uploaded = upload_and_verify(link,home_tolerance_1e7=home_tolerance)
     require(uploaded["mission_readback_verified"], "mission readback not confirmed")
     print("SITL_DYNAMIC_MISSION_UPLOADED", flush=True)
 

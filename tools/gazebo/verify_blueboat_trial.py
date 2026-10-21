@@ -43,8 +43,9 @@ def assess(truth, mission, mode, drift_seconds):
     max_motion = max(displacement(start, p) for p in truth)
     if max_motion < 5.0:
         raise ValueError(f"BlueBoat Gazebo physical movement too small: {max_motion:.2f}m")
-    if mission.get("bridge_mode") != "sensor-eskf":
-        raise ValueError("navigation was not C++ sensor-ESKF")
+    required_bridge = "sensor-eskf" if mode == "route" else "sensor-blackout"
+    if mission.get("bridge_mode") != required_bridge:
+        raise ValueError(f"expected C++ {required_bridge}, got {mission.get('bridge_mode')}")
     if not mission.get("armed_heartbeat_observed") or not mission.get("auto_heartbeat_observed"):
         raise ValueError("no evidence of ArduPilot armed AUTO")
     result = {"truth_source":"Gazebo BlueBoat actual model odometry",

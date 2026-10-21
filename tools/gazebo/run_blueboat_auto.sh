@@ -42,11 +42,24 @@ python3 "$ROOT/tools/gazebo/tune_wave_scenario.py" \
 echo "Gazebo BlueBoat marine physics mode=$MODE; loopback only"
 cleanup() {
   result=$?
-  kill "${TRUTH_PID:-}" "${EKF_PID:-}" "${ROVER_PID:-}" "${GZ_PID:-}" 2>/dev/null || true
+  # Explicitly terminate the ArduRover binary PID, not merely its
+  # launcher subshell. Gazebo's separate session also kills its children.
+  kill "${TRUTH_PID:-}" "${EKF_PID:-}" "${ROVER_PID:-}" 2>/dev/null || true
+  if [[ -n "${GZ_PID:-}" ]]; then
+    kill -- "-$GZ_PID" 2>/dev/null || true
+    kill "$GZ_PID" 2>/dev/null || true
+  fi
   wait "${TRUTH_PID:-}" 2>/dev/null || true
   wait "${EKF_PID:-}" 2>/dev/null || true
   wait "${ROVER_PID:-}" 2>/dev/null || true
   wait "${GZ_PID:-}" 2>/dev/null || true
+  # Require that the next scenario may bind the same SITL endpoints.
+  for _ in $(seq 1 30); do
+    if ! (echo > /dev/tcp/127.0.0.1/5760) 2>/dev/null; then
+      break
+    fi
+    sleep 0.2
+  done
   if [[ $result -ne 0 ]]; then
     echo "Gazebo BlueBoat integration FAILED. See $OUT" >&2
     for name in gazebo.log rover.log ekf_origin.log dynamic_bridge.log mission.log truth.log; do
@@ -57,7 +70,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-gz sim -s -r -v3 "$BLUEBOAT_PREPARED_WORLD" > "$OUT/gazebo.log" 2>&1 &
+# A dedicated process session lets cleanup kill the entire Gazebo process
+# tree. Otherwise a second CI scenario can bind to a stale first world.
+setsid gz sim -s -r -v3 "$BLUEBOAT_PREPARED_WORLD" > "$OUT/gazebo.log" 2>&1 &
 GZ_PID=$!
 echo "Waiting for REAL BlueBoat Gazebo model odometry topic"
 READY=0
@@ -76,7 +91,7 @@ done
   cd "$OUT"
   # Official BlueBoat setup: JSON input at loopback 9002, skid-steer thrusters.
   # No real vehicle connection, motors only inside Gazebo.
-  "$ARDUROVER_BINARY" --model JSON --home=-35.363261,149.165230,584,0 \
+  exec "$ARDUROVER_BINARY" --model JSON --home=-35.363261,149.165230,584,0 \
     --defaults="$ROOT/tools/gazebo/blueboat_nogps.parm" --wipe
 ) > "$OUT/rover.log" 2>&1 &
 ROVER_PID=$!

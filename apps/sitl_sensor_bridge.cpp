@@ -199,6 +199,8 @@ int main(int argc,char** argv) {
              <<" water_mode="<<fusion.generator().waterModeCount()
              <<" radar_range_outliers="<<fusion.generator().radarOutlierCount()
              <<" max_eskf_truth_error_m="<<max_estimation_error
+             <<" attitude_aided="<<fusion.acceptedAttitudes()
+             <<" attitude_rejected="<<fusion.rejectedAttitudes()
              <<" safety_blackout_triggered="<<int(hold_marker_written)
              <<" source=anonymous_radar_map_association_IMU_DVL_ESKF"
              <<" no_GNSS=true real_sensors=false\n";

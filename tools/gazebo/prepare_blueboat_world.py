@@ -23,6 +23,17 @@ def inject_blueboat(source: Path, destination: Path) -> None:
     )
     if not has_waves:
         raise ValueError("Missing upstream Wave Sim model://waves include")
+    # The upstream demonstration world ALREADY contains a duck craft at
+    # (0,0,0), exactly where BlueBoat is inserted. Two hulls then collide
+    # continuously, invalidating accelerometer agreement before ARM.
+    # This acceptance fixture must contain only the wave field and BlueBoat.
+    for include in list(world.findall("include")):
+        uri=include.findtext("uri")
+        if uri not in ("model://waves","model://blueboat"):
+            world.remove(include)
+    for model in list(world.findall("model")):
+        if model.get("name") not in ("axes",):
+            world.remove(model)
     boats = [include for include in world.findall("include")
              if include.findtext("uri") == "model://blueboat"]
     if len(boats) > 1:
@@ -39,6 +50,9 @@ def inject_blueboat(source: Path, destination: Path) -> None:
     checked = ET.parse(destination).getroot()
     assert sum(node.findtext("uri") == "model://blueboat"
                for node in checked.findall("world/include")) == 1
+    assert {node.findtext("uri") for node in checked.findall("world/include")} == {
+        "model://blueboat","model://waves"
+    }, "unexpected colliding model in isolated BlueBoat world"
 
 
 if __name__ == "__main__":

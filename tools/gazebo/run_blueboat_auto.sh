@@ -62,6 +62,14 @@ for _ in $(seq 1 120); do
 done
 [[ "$READY" -eq 1 ]] || { echo "NO_BLUEBOAT_GAZEBO_ODOMETRY_TOPIC" >&2; exit 4; }
 
+(
+  cd "$OUT"
+  # Official BlueBoat setup: JSON input at loopback 9002, skid-steer thrusters.
+  # No real vehicle connection, motors only inside Gazebo.
+  "$ARDUROVER_BINARY" --model JSON --home=-35.363261,149.165230,584,0 \
+    --defaults="$ROOT/tools/gazebo/blueboat_nogps.parm" --wipe
+) > "$OUT/rover.log" 2>&1 &
+ROVER_PID=$!
 python3 "$ROOT/tools/gazebo/gazebo_truth_monitor.py" \
   --seconds 240 --output "$OUT/gazebo_blueboat_truth.jsonl" \
   > "$OUT/truth.log" 2>&1 &
@@ -83,14 +91,6 @@ else:
     sys.exit("NO_LIVE_GAZEBO_BLUEBOAT_POSES before launching SITL")
 PY
 
-(
-  cd "$OUT"
-  # Official BlueBoat setup: JSON input at loopback 9002, skid-steer thrusters.
-  # No real vehicle connection, motors only inside Gazebo.
-  "$ARDUROVER_BINARY" --model JSON --home=-35.363261,149.165230,584,0 \
-    --defaults="$ROOT/tools/gazebo/blueboat_nogps.parm" --wipe
-) > "$OUT/rover.log" 2>&1 &
-ROVER_PID=$!
 python3 "$ROOT/tools/sitl/ekf_origin_probe.py" 5760 "$OUT" 210 \
   > "$OUT/ekf_origin.log" 2>&1 &
 EKF_PID=$!

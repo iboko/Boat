@@ -48,6 +48,17 @@ cleanup() {
   if [[ -n "${GZ_PID:-}" ]]; then
     kill -- "-$GZ_PID" 2>/dev/null || true
     kill "$GZ_PID" 2>/dev/null || true
+    # Gazebo may block on JSON lockstep while a controller disconnects.
+    # Bound shutdown; never wait forever for a stopped simulated world.
+    for _ in $(seq 1 30); do
+      if ! kill -0 "$GZ_PID" 2>/dev/null; then break; fi
+      sleep 0.1
+    done
+    if kill -0 "$GZ_PID" 2>/dev/null; then
+      echo "Killing unresponsive Gazebo simulator process group" >&2
+      kill -KILL -- "-$GZ_PID" 2>/dev/null || true
+      kill -KILL "$GZ_PID" 2>/dev/null || true
+    fi
   fi
   wait "${TRUTH_PID:-}" 2>/dev/null || true
   wait "${EKF_PID:-}" 2>/dev/null || true

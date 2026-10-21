@@ -32,6 +32,13 @@ PRIMER="${STATIC_BRIDGE_BINARY:-$ROOT/build-mavlink/boat_sitl_bridge}"
 for required in "$ARDUROVER_BINARY" "$SENSOR_BRIDGE" "$PRIMER"; do
   [[ -x "$required" ]] || { echo "Missing executable: $required" >&2; exit 3; }
 done
+# Prepare a mild but nonzero FFT wave baseline: original upstream
+# world has wind_speed=5 and steepness=2, too rough for initial AHRS alignment.
+# This is only the experiment checkout; document the actual water state.
+python3 "$ROOT/tools/gazebo/tune_wave_scenario.py" \
+  --model "$ASV_WAVE_SIM_ROOT/gz-waves-models/world_models/waves/model.sdf" \
+  --wind-speed 1.0 --steepness 0.4 \
+  | tee "$OUT/wave_scenario.log"
 echo "Gazebo BlueBoat marine physics mode=$MODE; loopback only"
 cleanup() {
   result=$?

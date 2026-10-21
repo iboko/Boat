@@ -20,6 +20,9 @@ export BLUEBOAT_PREPARED_WORLD="$OUT/waves_with_blueboat.sdf"
 export GZ_IP="127.0.0.1"
 export GZ_SIM_RESOURCE_PATH="$SITL_MODELS_ROOT/Gazebo/models:$SITL_MODELS_ROOT/Gazebo/worlds:$ASV_WAVE_SIM_ROOT/gz-waves-models/models:$ASV_WAVE_SIM_ROOT/gz-waves-models/world_models:$ASV_WAVE_SIM_ROOT/gz-waves-models/worlds:${GZ_SIM_RESOURCE_PATH:-}"
 export GZ_SIM_SYSTEM_PLUGIN_PATH="$ARDUPILOT_GAZEBO_BUILD:$ASV_WAVE_SIM_PLUGIN_DIR:${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
+# Gazebo finds the plugin .so through GZ_SIM_SYSTEM_PLUGIN_PATH, but
+# its transitive Wave Sim shared libraries require the dynamic loader path.
+export LD_LIBRARY_PATH="$ASV_WAVE_SIM_PLUGIN_DIR:$ARDUPILOT_GAZEBO_BUILD:${LD_LIBRARY_PATH:-}"
 
 bash "$ROOT/tools/gazebo/check_blueboat.sh" --check-only |
   tee "$OUT/gazebo_preflight.log"
@@ -80,7 +83,7 @@ file=pathlib.Path(sys.argv[1])
 for _ in range(150):
     try:
         obs=[json.loads(l) for l in file.read_text().splitlines()[-10:]]
-        if len(obs)>=8 and all(o['source']=='Gazebo BlueBoat' for o in obs) and (
+        if len(obs)>=8 and all(o['source']=='Gazebo BlueBoat' and abs(float(o['z']))<3.0 for o in obs) and (
             time.monotonic()-obs[-1]['monotonic_s']<4):
             print('BLUEBOAT_GAZEBO_TRUTH_CONFIRMED',flush=True)
             break

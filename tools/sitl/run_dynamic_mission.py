@@ -30,6 +30,8 @@ def main():
     parser.add_argument("--sitl-only", action="store_true")
     parser.add_argument("--bridge-mode",choices=("direct-truth","sensor-eskf","sensor-blackout"),default="direct-truth")
     parser.add_argument("--duration", type=int, default=135)
+    parser.add_argument("--gazebo-truth-file", type=Path,
+        help="require recent live BlueBoat Gazebo pose stream before mission writes/ARM")
     parser.add_argument("--cpp-bridge", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
@@ -67,6 +69,30 @@ def main():
             break
     require(physics_proof, "refusing any mission mutation: SITL physical truth not verified")
     print("SITL_PHYSICS_PROOF_BEFORE_MISSION_MUTATION",flush=True)
+
+    if args.gazebo_truth_file is not None:
+        # A SIM_STATE message by itself is NOT proof of Gazebo. The
+        # independent gz topic monitor must be alive and reporting physics.
+        gaze_verified = False
+        gaze_deadline = time.monotonic() + 18.0
+        while time.monotonic() < gaze_deadline:
+            try:
+                recent = [json.loads(item) for item in
+                          args.gazebo_truth_file.read_text(encoding="utf-8").splitlines()[-10:]]
+                gaze_verified = len(recent) >= 6 and all(
+                    entry.get("source") == "Gazebo BlueBoat" and
+                    all(math.isfinite(float(entry[field])) for field in
+                        ("x", "y", "z", "monotonic_s"))
+                    for entry in recent
+                ) and (time.monotonic()-recent[-1]["monotonic_s"] < 4.0)
+            except (OSError, KeyError, TypeError, ValueError, OverflowError):
+                gaze_verified = False
+            if gaze_verified:
+                break
+            time.sleep(0.3)
+        require(gaze_verified,
+                "refusing mission mutation: actual live Gazebo BlueBoat world poses absent")
+        print("GAZEBO_BLUEBOAT_PHYSICS_PROOF_BEFORE_MISSION_MUTATION",flush=True)
 
     uploaded = upload_and_verify(link)
     require(uploaded["mission_readback_verified"], "mission readback not confirmed")
@@ -260,6 +286,9 @@ def main():
             "bridge_mode":args.bridge_mode,
             "hold_request_sent":hold_request_sent,
             "hold_confirmed":hold_confirmed_at is not None,
+            "hold_confirmed_monotonic_s":hold_confirmed_at,
+            "hold_requested_monotonic_s":hold_requested_at,
+            "gazebo_verified_before_arm":args.gazebo_truth_file is not None,
             "hold_latency_s":(round(hold_confirmed_at-hold_requested_at,3) if hold_confirmed_at is not None else None),
             "integrity_marker_observed":marker.is_file() if args.bridge_mode=="sensor-blackout" else False,
             "gnss_from_ardupilot_parameters":"disabled in separate origin probe",

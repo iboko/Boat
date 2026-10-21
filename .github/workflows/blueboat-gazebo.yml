@@ -102,7 +102,7 @@ jobs:
       - name: Execute actual Gazebo BlueBoat AUTO with no GNSS
         working-directory: Boat
         run: |
-          BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output" \
+          BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output/route" \
           bash tools/gazebo/run_blueboat_auto.sh --sitl-only route
       - name: Execute actual Gazebo BlueBoat radar outage and physical drift after HOLD
         working-directory: Boat

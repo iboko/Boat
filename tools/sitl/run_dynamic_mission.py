@@ -82,7 +82,7 @@ def main():
                 gaze_verified = len(recent) >= 6 and all(
                     entry.get("source") == "Gazebo BlueBoat" and
                     all(math.isfinite(float(entry[field])) for field in
-                        ("x", "y", "z", "monotonic_s"))
+                        ("x", "y", "z", "monotonic_s")) and abs(float(entry['z'])) < 3.0
                     for entry in recent
                 ) and (time.monotonic()-recent[-1]["monotonic_s"] < 4.0)
             except (OSError, KeyError, TypeError, ValueError, OverflowError):

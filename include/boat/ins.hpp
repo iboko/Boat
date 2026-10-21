@@ -50,6 +50,14 @@ struct AbsoluteFix {
     bool independently_georeferenced{false}; // false if derived from GNSS in another module
 };
 
+struct AbsoluteAttitude {
+    double time_s{};
+    Quaternion body_to_ned{};
+    double angular_sigma_rad{0.035};
+    bool independently_measured{false}; // simulated inclinometer/compass, not truth injection
+    bool valid{false};
+};
+
 struct GroundVelocity {
     double time_s{};
     Vec3 velocity_ned_mps{};
@@ -90,6 +98,7 @@ struct Configuration {
     double gyro_bias_walk_radps2_per_sqrt_hz{0.00003};
     double max_position_nis{16.27}; // 3 DoF 99.9% approximate threshold
     double max_velocity_nis{16.27};
+    double max_attitude_nis{16.27};
     double initial_position_sigma_m{4.0};
     double initial_velocity_sigma_mps{1.0};
     double initial_attitude_sigma_rad{0.08};
@@ -107,6 +116,7 @@ public:
     bool propagate(const ImuSample& imu);
     bool correctPosition(const AbsoluteFix& fix);
     bool correctGroundVelocity(const GroundVelocity& observation);
+    bool correctAttitude(const AbsoluteAttitude& observation);
     const State& state() const { return state_; }
     static double horizontalSigmaM(const State& state);
     static double maximumCovarianceAsymmetry(const State& state);

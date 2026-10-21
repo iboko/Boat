@@ -18,14 +18,14 @@ done
 [[ -f "$BLUEBOAT_MODEL" ]] || { echo "Missing BlueBoat model: $BLUEBOAT_MODEL" >&2; exit 1; }
 [[ -f "$WAVES_WORLD" ]] || { echo "Missing upstream Wave Sim world: $WAVES_WORLD" >&2; exit 1; }
 [[ -d "$ARDUPILOT_GAZEBO_BUILD" ]] || { echo "Missing compiled ArduPilot Gazebo plugin build directory" >&2; exit 1; }
-if ! find "$ARDUPILOT_GAZEBO_BUILD" -maxdepth 2 -type f \( -name '*.so' -o -name '*.dylib' \) | grep -q .; then
+if ! find -L "$ARDUPILOT_GAZEBO_BUILD" -maxdepth 4 -type f \( -name '*.so' -o -name '*.dylib' \) | grep -q .; then
   echo "No compiled Gazebo plugin shared libraries: $ARDUPILOT_GAZEBO_BUILD" >&2
   exit 1
 fi
 [[ -d "$ASV_WAVE_SIM_PLUGIN_DIR" ]] || {
   echo "Missing ASV Wave Sim compiled hydrodynamics plugin directory" >&2; exit 1;
 }
-if ! find "$ASV_WAVE_SIM_PLUGIN_DIR" -maxdepth 6 -type f -name '*hydrodynamics*.so' | grep -q .; then
+if ! find -L "$ASV_WAVE_SIM_PLUGIN_DIR" -maxdepth 6 -type f -name '*hydrodynamics*.so' | grep -q .; then
   echo "No compiled ASV Wave Sim hydrodynamics shared library was found" >&2
   exit 1
 fi

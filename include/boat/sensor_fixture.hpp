@@ -50,6 +50,7 @@ class SyntheticSensors {
 public:
     explicit SyntheticSensors(Scenario scenario = {});
     SensorSet observe(const PhysicsFrame& truth);
+    void beginRadarBlackoutAfter(double now_s, double delay_s=6.0);
     bool initialized() const { return initialized_; }
     unsigned shoreCount() const { return shore_count_; }
     unsigned dvlCount() const { return dvl_count_; }
@@ -80,6 +81,7 @@ public:
     const ins::State& state() const { return estimator_.state(); }
     const SensorSet& sensors() const { return latest_; }
     bool integrity() const;
+    bool beginRadarBlackoutAfterArm();
     double lastShoreFixTimeS() const { return estimator_.state().last_non_gnss_fix_s; }
     unsigned propagated() const { return propagated_; }
     unsigned acceptedAttitudes() const { return accepted_attitudes_; }

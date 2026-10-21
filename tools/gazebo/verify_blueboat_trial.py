@@ -19,6 +19,8 @@ def load_truth(path):
         for field in ("x", "y", "z", "monotonic_s"):
             if not isinstance(obj.get(field), (int, float)) or not math.isfinite(obj[field]):
                 raise ValueError(f"invalid Gazebo truth field {field}")
+        if abs(obj["z"])>3.0:
+            raise ValueError("Gazebo hull exited plausible sea-surface envelope; wave/buoyancy plugin failed")
         if observations and obj["monotonic_s"] <= observations[-1]["monotonic_s"]:
             raise ValueError("non-monotonic Gazebo source clock")
         observations.append(obj)
@@ -32,6 +34,11 @@ def displacement(a, b):
 def assess(truth, mission, mode, drift_seconds):
     if len(truth) < 30:
         raise ValueError("not enough independent Gazebo BlueBoat poses")
+    # Reject physics substitutes that fall through the water or teleport.
+    for current, following in zip(truth,truth[1:]):
+        dt=following["monotonic_s"]-current["monotonic_s"]
+        if dt>0.0 and displacement(current,following)>max(2.0,30.0*dt):
+            raise ValueError("implausible BlueBoat horizontal jump in Gazebo physics")
     start = truth[0]
     max_motion = max(displacement(start, p) for p in truth)
     if max_motion < 5.0:

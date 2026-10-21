@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory() as directory:
               "mission_reached_events":[1,2,3],"pass":True}
     report=assess(truth,complete,"route",20.0)
     assert report["route_confirmed"] and report["model_max_displacement_m"]>10
-    outage={"bridge_mode":"sensor-eskf","armed_heartbeat_observed":True,
+    outage={"bridge_mode":"sensor-blackout","armed_heartbeat_observed":True,
             "auto_heartbeat_observed":True,
             "hold_confirmed":True,
             "hold_confirmed_monotonic_s":base+10.0,

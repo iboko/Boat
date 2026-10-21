@@ -50,13 +50,30 @@ SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
     // Accelerometer measures specific force, NOT gravity-corrected acceleration.
     const auto specific=ins::rotateInverse(
         ins::normalize(t.body_to_ned),accel_ned-ins::Vec3{0,0,kGravity});
+    // SIM_STATE gyro channels can be defined in a different basis from its
+    // Euler angles in the Gazebo JSON/FDM bridge. For the SITL fixture derive
+    // BODY angular velocity from successive surveyed truth quaternions, then
+    // add independent synthetic gyro bias/noise. This is still a virtual IMU.
+    ins::Vec3 gyro_body{};
+    if(dt>0.0) {
+        const auto oldq=ins::normalize(previous_.body_to_ned);
+        const auto newq=ins::normalize(t.body_to_ned);
+        const ins::Quaternion inverse{oldq.w,-oldq.x,-oldq.y,-oldq.z};
+        auto dq=ins::normalize(ins::multiply(inverse,newq));
+        if(dq.w<0.0)
+            dq={-dq.w,-dq.x,-dq.y,-dq.z};
+        const ins::Vec3 axis{dq.x,dq.y,dq.z};
+        const double magnitude=ins::norm(axis);
+        gyro_body=magnitude>1.e-12 ?
+            axis*(2.0*std::atan2(magnitude,dq.w)/(magnitude*dt)) :
+            axis*(2.0/dt);
+    }
     const auto accel_noise=periodicNoise(t.time_s,0.018);
     const auto gyro_noise=periodicNoise(t.time_s,0.00025);
     result.imu={t.time_s,
         specific+ins::Vec3{scenario_.accel_bias_mps2,
                            -0.7*scenario_.accel_bias_mps2,0.006}+accel_noise,
-        t.angular_rate_frd_radps+
-           ins::Vec3{0,0,scenario_.gyro_bias_radps}+gyro_noise,
+        gyro_body+ins::Vec3{0,0,scenario_.gyro_bias_radps}+gyro_noise,
         true};
     // Separate virtual compass/inclinometer observation, with a small
     // known angle noise, rather than direct attitude assignment in ODOMETRY.

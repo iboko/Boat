@@ -58,6 +58,15 @@ SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
         t.angular_rate_frd_radps+
            ins::Vec3{0,0,scenario_.gyro_bias_radps}+gyro_noise,
         true};
+    // Separate virtual compass/inclinometer observation, with a small
+    // known angle noise, rather than direct attitude assignment in ODOMETRY.
+    // It is synthesized from Gazebo truth; no real sensor is claimed.
+    const auto tilt_noise=periodicNoise(t.time_s,0.004);
+    result.attitude={t.time_s,
+        ins::normalize(ins::multiply(t.body_to_ned,
+                                     ins::expRotation(tilt_noise))),
+        0.025,true,true};
+    result.attitude_fix_available=true;
     if(t.time_s-last_radar_time_s>=scenario_.radar_period_s-0.00001) {
         last_radar_time_s=t.time_s;
         if(dropout(t.time_s,scenario_.radar_dropout_from_s,
@@ -156,6 +165,12 @@ bool SensorFusion::step(const PhysicsFrame& truth) {
                        start+dt*static_cast<double>(k)/steps;
         if(!estimator_.propagate(sample)) {++rejected_steps_;return false;}
         ++propagated_;
+    }
+    if(latest_.attitude_fix_available) {
+        if(estimator_.correctAttitude(latest_.attitude))
+            ++accepted_attitudes_;
+        else
+            ++rejected_attitudes_;
     }
     if(latest_.bottom_track_available)
         (void)estimator_.correctGroundVelocity(latest_.bottom_track);

@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SITL_MODELS_ROOT="${SITL_MODELS_ROOT:-$HOME/SITL_Models}"
 ASV_WAVE_SIM_ROOT="${ASV_WAVE_SIM_ROOT:-$HOME/asv_wave_sim}"
 ARDUPILOT_GAZEBO_BUILD="${ARDUPILOT_GAZEBO_BUILD:-$HOME/ardupilot_gazebo/build}"
-ASV_WAVE_SIM_PLUGIN_DIR="${ASV_WAVE_SIM_PLUGIN_DIR:-$ASV_WAVE_SIM_ROOT/build}"
+ASV_WAVE_SIM_PLUGIN_DIR="${ASV_WAVE_SIM_PLUGIN_DIR:-$HOME/gz_ws/install/lib}"
 WAVES_WORLD="$ASV_WAVE_SIM_ROOT/gz-waves-models/worlds/waves.sdf"
 BLUEBOAT_MODEL="$SITL_MODELS_ROOT/Gazebo/models/blueboat/model.sdf"
 for cmd in gz python3; do
@@ -32,6 +32,12 @@ fi
 grep -q 'gz-waves1-hydrodynamics-system' "$BLUEBOAT_MODEL" || {
   echo "BlueBoat model does not reference expected wave hydrodynamics plugin" >&2
   exit 1
+}
+grep -q 'filename="ArduPilotPlugin"' "$BLUEBOAT_MODEL" || {
+  echo "ArduPilot JSON bridge missing in BlueBoat SDF" >&2; exit 1;
+}
+grep -q 'cmd_thrust' "$BLUEBOAT_MODEL" || {
+  echo "BlueBoat SDF missing commanded propulsor channels" >&2; exit 1;
 }
 OUTPUT="${BLUEBOAT_PREPARED_WORLD:-$ROOT/build-blueboat/waves_with_blueboat.sdf}"
 python3 "$ROOT/tools/gazebo/prepare_blueboat_world.py" \

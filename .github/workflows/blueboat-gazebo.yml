@@ -96,6 +96,8 @@ jobs:
             https://firmware.ardupilot.org/Rover/latest/SITL_x86_64_linux_gnu/git-version.txt \
             -o Boat/sitl-smoke-output/ardurover-git-version.txt
           chmod +x Boat/sitl-smoke-output/ardurover
+      - name: Verify Gazebo test runner shell syntax
+        run: bash -n Boat/tools/gazebo/run_blueboat_auto.sh
       - name: Validate genuine BlueBoat Gazebo dependencies
         working-directory: Boat
         run: bash tools/gazebo/check_blueboat.sh --check-only
@@ -103,12 +105,12 @@ jobs:
         working-directory: Boat
         run: |
           BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output/route" \
-          bash tools/gazebo/run_blueboat_auto.sh --sitl-only route
+          timeout --signal=TERM --kill-after=15s 300s bash tools/gazebo/run_blueboat_auto.sh --sitl-only route
       - name: Execute actual Gazebo BlueBoat radar outage and physical drift after HOLD
         working-directory: Boat
         run: |
           BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output/hold" \
-          bash tools/gazebo/run_blueboat_auto.sh --sitl-only hold
+          timeout --signal=TERM --kill-after=15s 300s bash tools/gazebo/run_blueboat_auto.sh --sitl-only hold
       - name: Preserve genuine Gazebo physics reports even on failure
         if: always()
         uses: actions/upload-artifact@v4

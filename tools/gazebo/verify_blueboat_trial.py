@@ -41,8 +41,11 @@ def assess(truth, mission, mode, drift_seconds):
             raise ValueError("implausible BlueBoat horizontal jump in Gazebo physics")
     start = truth[0]
     max_motion = max(displacement(start, p) for p in truth)
-    if max_motion < 5.0:
-        raise ValueError(f"BlueBoat Gazebo physical movement too small: {max_motion:.2f}m")
+    # A mandated safety stop must NOT require the same 5 m travel as a
+    # successfully completed route; an earlier stop is more conservative.
+    motion_min=5.0 if mode=="route" else 0.5
+    if max_motion < motion_min:
+        raise ValueError(f"BlueBoat Gazebo physical movement too small for {mode}: {max_motion:.2f}m")
     required_bridge = "sensor-eskf" if mode == "route" else "sensor-blackout"
     if mission.get("bridge_mode") != required_bridge:
         raise ValueError(f"expected C++ {required_bridge}, got {mission.get('bridge_mode')}")

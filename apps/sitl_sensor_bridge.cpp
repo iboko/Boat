@@ -70,12 +70,14 @@ int main(int argc,char** argv) {
     std::cerr.flush();
     boat::fixture::Scenario scenario{};
     if(blackout) {
-        scenario.radar_dropout_from_s=6.0;
-        scenario.radar_dropout_until_s=500.0;
+        // No dropout before an independent HEARTBEAT confirms ARM+AUTO.
+        scenario.radar_dropout_from_s=600.0;
+        scenario.radar_dropout_until_s=600.0;
         scenario.max_non_gnss_fix_age_s=3.0;
     }
     boat::fixture::SensorFusion fusion{scenario};
     bool hold_marker_written=false;
+    bool radar_blackout_activated=false;
     std::size_t sent=0;
     std::size_t rejected_odometry=0;
     double max_estimation_error=0.0;
@@ -99,6 +101,17 @@ int main(int argc,char** argv) {
         std::string line;
         if(!std::getline(std::cin,line))break;
         if(line.empty())continue;
+        if(line=="RADAR_BLACKOUT") {
+            if(!blackout || radar_blackout_activated ||
+               !fusion.beginRadarBlackoutAfterArm()) {
+                std::cerr<<"FAIL: invalid post-ARM radar blackout directive\n";
+                return 12;
+            }
+            radar_blackout_activated=true;
+            std::cerr<<"RADAR_BLACKOUT_AFTER_ARM_CONFIRMED now_s="
+                     <<fusion.state().time_s<<"\n";
+            continue;
+        }
         Truth t{};
         if(!parse(line,t)) {
             std::cerr<<"FAIL: invalid SIM_STATE input (13 finite scalars expected)\n";
@@ -199,10 +212,12 @@ int main(int argc,char** argv) {
              <<" water_mode="<<fusion.generator().waterModeCount()
              <<" radar_range_outliers="<<fusion.generator().radarOutlierCount()
              <<" max_eskf_truth_error_m="<<max_estimation_error
+             <<" attitude_aided="<<fusion.acceptedAttitudes()
+             <<" attitude_rejected="<<fusion.rejectedAttitudes()
              <<" safety_blackout_triggered="<<int(hold_marker_written)
              <<" source=anonymous_radar_map_association_IMU_DVL_ESKF"
              <<" no_GNSS=true real_sensors=false\n";
     return sent>=10 && fusion.generator().missedShoreCount()>0 &&
-        (blackout ? hold_marker_written :
+        (blackout ? (hold_marker_written && radar_blackout_activated) :
             fusion.generator().missedDvlCount()>0) ? 0:9;
 }

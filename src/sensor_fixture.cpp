@@ -34,6 +34,13 @@ SyntheticSensors::SyntheticSensors(Scenario s):scenario_(s) {
     }
 }
 
+void SyntheticSensors::beginRadarBlackoutAfter(double now_s, double delay_s) {
+    if(!valid(now_s) || !valid(delay_s) || delay_s<0 || delay_s>30.0)
+        throw std::invalid_argument("invalid armed radar blackout trigger");
+    scenario_.radar_dropout_from_s=now_s+delay_s;
+    scenario_.radar_dropout_until_s=std::max(500.0,now_s+delay_s+60.0);
+}
+
 SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
     SensorSet result{};
     if(!valid(t.time_s)||!valid(t.position_ned_m)||
@@ -50,14 +57,40 @@ SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
     // Accelerometer measures specific force, NOT gravity-corrected acceleration.
     const auto specific=ins::rotateInverse(
         ins::normalize(t.body_to_ned),accel_ned-ins::Vec3{0,0,kGravity});
+    // SIM_STATE gyro channels can be defined in a different basis from its
+    // Euler angles in the Gazebo JSON/FDM bridge. For the SITL fixture derive
+    // BODY angular velocity from successive surveyed truth quaternions, then
+    // add independent synthetic gyro bias/noise. This is still a virtual IMU.
+    ins::Vec3 gyro_body{};
+    if(dt>0.0) {
+        const auto oldq=ins::normalize(previous_.body_to_ned);
+        const auto newq=ins::normalize(t.body_to_ned);
+        const ins::Quaternion inverse{oldq.w,-oldq.x,-oldq.y,-oldq.z};
+        auto dq=ins::normalize(ins::multiply(inverse,newq));
+        if(dq.w<0.0)
+            dq={-dq.w,-dq.x,-dq.y,-dq.z};
+        const ins::Vec3 axis{dq.x,dq.y,dq.z};
+        const double magnitude=ins::norm(axis);
+        gyro_body=magnitude>1.e-12 ?
+            axis*(2.0*std::atan2(magnitude,dq.w)/(magnitude*dt)) :
+            axis*(2.0/dt);
+    }
     const auto accel_noise=periodicNoise(t.time_s,0.018);
     const auto gyro_noise=periodicNoise(t.time_s,0.00025);
     result.imu={t.time_s,
         specific+ins::Vec3{scenario_.accel_bias_mps2,
                            -0.7*scenario_.accel_bias_mps2,0.006}+accel_noise,
-        t.angular_rate_frd_radps+
-           ins::Vec3{0,0,scenario_.gyro_bias_radps}+gyro_noise,
+        gyro_body+ins::Vec3{0,0,scenario_.gyro_bias_radps}+gyro_noise,
         true};
+    // Separate virtual compass/inclinometer observation, with a small
+    // known angle noise, rather than direct attitude assignment in ODOMETRY.
+    // It is synthesized from Gazebo truth; no real sensor is claimed.
+    const auto tilt_noise=periodicNoise(t.time_s,0.004);
+    result.attitude={t.time_s,
+        ins::normalize(ins::multiply(t.body_to_ned,
+                                     ins::expRotation(tilt_noise))),
+        0.025,true,true};
+    result.attitude_fix_available=true;
     if(t.time_s-last_radar_time_s>=scenario_.radar_period_s-0.00001) {
         last_radar_time_s=t.time_s;
         if(dropout(t.time_s,scenario_.radar_dropout_from_s,
@@ -157,6 +190,12 @@ bool SensorFusion::step(const PhysicsFrame& truth) {
         if(!estimator_.propagate(sample)) {++rejected_steps_;return false;}
         ++propagated_;
     }
+    if(latest_.attitude_fix_available) {
+        if(estimator_.correctAttitude(latest_.attitude))
+            ++accepted_attitudes_;
+        else
+            ++rejected_attitudes_;
+    }
     if(latest_.bottom_track_available)
         (void)estimator_.correctGroundVelocity(latest_.bottom_track);
     // Water-track velocity is explicitly NOT passed to correctGroundVelocity.
@@ -178,6 +217,12 @@ bool SensorFusion::step(const PhysicsFrame& truth) {
             }
         }
     }
+    return true;
+}
+
+bool SensorFusion::beginRadarBlackoutAfterArm() {
+    if(first_ || !estimator_.state().initialized) return false;
+    sensors_.beginRadarBlackoutAfter(estimator_.state().time_s,6.0);
     return true;
 }
 

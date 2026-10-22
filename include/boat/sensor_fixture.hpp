@@ -17,6 +17,8 @@ struct PhysicsFrame {
 
 struct SensorSet {
     ins::ImuSample imu{};
+    ins::AbsoluteAttitude attitude{};
+    bool attitude_fix_available{false};
     ins::AbsoluteFix shore_fix{};
     ShoreRanges shore_ranges{};
     AnonymousRanges unlabelled_echoes{};
@@ -48,6 +50,7 @@ class SyntheticSensors {
 public:
     explicit SyntheticSensors(Scenario scenario = {});
     SensorSet observe(const PhysicsFrame& truth);
+    void beginRadarBlackoutAfter(double now_s, double delay_s=6.0);
     bool initialized() const { return initialized_; }
     unsigned shoreCount() const { return shore_count_; }
     unsigned dvlCount() const { return dvl_count_; }
@@ -78,8 +81,11 @@ public:
     const ins::State& state() const { return estimator_.state(); }
     const SensorSet& sensors() const { return latest_; }
     bool integrity() const;
+    bool beginRadarBlackoutAfterArm();
     double lastShoreFixTimeS() const { return estimator_.state().last_non_gnss_fix_s; }
     unsigned propagated() const { return propagated_; }
+    unsigned acceptedAttitudes() const { return accepted_attitudes_; }
+    unsigned rejectedAttitudes() const { return rejected_attitudes_; }
     unsigned rejectedSteps() const { return rejected_steps_; }
     const SyntheticSensors& generator() const { return sensors_; }
 
@@ -90,6 +96,7 @@ private:
     SensorSet latest_{};
     bool first_{true};
     unsigned propagated_{0}, rejected_steps_{0};
+    unsigned accepted_attitudes_{0}, rejected_attitudes_{0};
 };
 
 } // namespace boat::fixture

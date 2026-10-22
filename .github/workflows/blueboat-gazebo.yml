@@ -1,0 +1,122 @@
+name: BlueBoat Gazebo marine integration (experimental)
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'tools/gazebo/**'
+      - '.github/workflows/blueboat-gazebo.yml'
+      - 'tools/sitl/run_dynamic_mission.py'
+      - 'tools/gazebo/blueboat_nogps.parm'
+
+jobs:
+  gazebo-blueboat:
+    name: Actual Gazebo BlueBoat waves + Rover JSON + ESKF
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      GZ_VERSION: harmonic
+      SITL_MODELS_ROOT: ${{ github.workspace }}/third-party/SITL_Models
+      ASV_WAVE_SIM_ROOT: ${{ github.workspace }}/gz_ws/src/asv_wave_sim
+      ARDUPILOT_GAZEBO_BUILD: ${{ github.workspace }}/third-party/ardupilot_gazebo/build
+      ASV_WAVE_SIM_PLUGIN_DIR: ${{ github.workspace }}/gz_ws/install/lib
+      GZ_IP: 127.0.0.1
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: Boat
+      - name: Install Gazebo Harmonic and physics build dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y curl gnupg lsb-release ca-certificates
+          sudo curl -fsSL https://packages.osrfoundation.org/gazebo.gpg -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] https://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" |
+            sudo tee /etc/apt/sources.list.d/gazebo-stable.list
+          sudo apt-get update
+          sudo apt-get install -y gz-harmonic libgz-sim8-dev rapidjson-dev \
+            libcgal-dev libfftw3-dev libboost-all-dev \
+            cmake build-essential pkg-config python3-pip
+          # Official ArduPilot Gazebo plugin needs OpenCV/GStreamer headers even
+          # when we execute only the headless physics server.
+          sudo apt-get install -y libunwind-dev
+          sudo apt-get install -y libopencv-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+          python3 -m pip install --user --disable-pip-version-check colcon-common-extensions
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          gz sim --versions
+      - name: Checkout physical BlueBoat, ASV Wave Sim and ArduPilot Gazebo bridge
+        uses: actions/checkout@v4
+        with:
+          repository: ArduPilot/SITL_Models
+          path: third-party/SITL_Models
+          sparse-checkout: |
+            Gazebo/models/blueboat
+            Gazebo/docs/BlueBoat.md
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: srmainwaring/asv_wave_sim
+          path: gz_ws/src/asv_wave_sim
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ArduPilot/ardupilot_gazebo
+          path: third-party/ardupilot_gazebo
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: mavlink/c_library_v2
+          path: mavlink_headers
+          persist-credentials: false
+      - name: Build wave hydrodynamics plugins
+        run: |
+          cd gz_ws
+          colcon build --symlink-install --merge-install \
+            --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_CXX_STANDARD=17
+          find install -iname '*hydrodynamics*.so' -print
+          test -n "$(find install -iname '*hydrodynamics*.so' -print -quit)"
+      - name: Build ArduPilot Gazebo JSON plugin and Boat C++
+        run: |
+          cmake -S third-party/ardupilot_gazebo -B third-party/ardupilot_gazebo/build \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build third-party/ardupilot_gazebo/build --parallel 2
+          cmake -S Boat -B Boat/build-mavlink -DCMAKE_BUILD_TYPE=Release \
+            -DBOAT_WITH_MAVLINK=ON \
+            -DBOAT_MAVLINK_INCLUDE_DIR="$GITHUB_WORKSPACE/mavlink_headers"
+          cmake --build Boat/build-mavlink --parallel 2
+          ctest --test-dir Boat/build-mavlink --output-on-failure
+      - name: Download ArduRover SITL binary and test-only MAVLink client
+        run: |
+          python3 -m pip install --disable-pip-version-check --user "pymavlink>=2.4,<2.5"
+          mkdir -p Boat/sitl-smoke-output
+          curl -fL --retry 3 --connect-timeout 20 \
+            https://firmware.ardupilot.org/Rover/latest/SITL_x86_64_linux_gnu/ardurover \
+            -o Boat/sitl-smoke-output/ardurover
+          curl -fL --retry 3 --connect-timeout 20 \
+            https://firmware.ardupilot.org/Rover/latest/SITL_x86_64_linux_gnu/git-version.txt \
+            -o Boat/sitl-smoke-output/ardurover-git-version.txt
+          chmod +x Boat/sitl-smoke-output/ardurover
+      - name: Verify Gazebo test runner shell syntax
+        run: bash -n Boat/tools/gazebo/run_blueboat_auto.sh
+      - name: Validate genuine BlueBoat Gazebo dependencies
+        working-directory: Boat
+        run: bash tools/gazebo/check_blueboat.sh --check-only
+      - name: Execute actual Gazebo BlueBoat AUTO with no GNSS
+        working-directory: Boat
+        run: |
+          BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output/route" \
+          timeout --signal=TERM --kill-after=15s 300s bash tools/gazebo/run_blueboat_auto.sh --sitl-only route
+      - name: Execute actual Gazebo BlueBoat radar outage and physical drift after HOLD
+        working-directory: Boat
+        run: |
+          BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output/hold" \
+          timeout --signal=TERM --kill-after=15s 300s bash tools/gazebo/run_blueboat_auto.sh --sitl-only hold
+      - name: Preserve genuine Gazebo physics reports even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boat-v011-genuine-gazebo-blueboat
+          path: |
+            blueboat-output/
+            Boat/sitl-smoke-output/ardurover-git-version.txt
+          retention-days: 30

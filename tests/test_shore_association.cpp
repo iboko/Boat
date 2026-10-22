@@ -54,6 +54,35 @@ int main(){
         demand(observed_stop,"prolonged loss of shoreline fails to stop navigation");
         demand(fusion.state().last_gnss_fix_s<0,
                "GNSS must remain disabled");
+        // Gazebo may require a long firmware-clock pre-arm warmup.
+        // Radar failure must not start until the supervisor has received
+        // ARMED+AUTO, rather than counting from when the bridge boots.
+        Scenario defer{};
+        defer.radar_dropout_from_s=600.0;
+        defer.radar_dropout_until_s=600.0;
+        defer.max_non_gnss_fix_age_s=3.0;
+        SensorFusion on_arm(defer);
+        bool fired=false;
+        for(int i=0;i<=250;++i) {
+            const double t=i*0.1;
+            demand(on_arm.step({t,{0,0,0},{0,0,0},
+                   {1,0,0,0},{0,0,0}}),"delayed radar test propagation");
+            if(i==100) {
+                demand(on_arm.beginRadarBlackoutAfterArm(),
+                       "supervisor could not trigger armed radar outage");
+                fired=true;
+            }
+            if(t<15.5) {
+                demand(on_arm.generator().missedShoreCount()==0,
+                       "radar blackout began before the armed supervisor delay");
+                demand(on_arm.integrity(),
+                       "navigation stale during pre-arm warmup");
+            }
+        }
+        demand(fired && on_arm.generator().missedShoreCount()>0,
+               "armed synthetic radar outage never activated");
+        demand(!on_arm.integrity(),
+               "continued radar blackout did not trigger HOLD integrity gate");
         std::cout<<"PASS: shuffled anonymous radar echoes, false return gated, "
                     "position prior required, stale shore position triggers HOLD request\n";
         return 0;

@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SITL_MODELS_ROOT="${SITL_MODELS_ROOT:-$HOME/SITL_Models}"
 ASV_WAVE_SIM_ROOT="${ASV_WAVE_SIM_ROOT:-$HOME/asv_wave_sim}"
 ARDUPILOT_GAZEBO_BUILD="${ARDUPILOT_GAZEBO_BUILD:-$HOME/ardupilot_gazebo/build}"
-ASV_WAVE_SIM_PLUGIN_DIR="${ASV_WAVE_SIM_PLUGIN_DIR:-$ASV_WAVE_SIM_ROOT/build}"
+ASV_WAVE_SIM_PLUGIN_DIR="${ASV_WAVE_SIM_PLUGIN_DIR:-$HOME/gz_ws/install/lib}"
 WAVES_WORLD="$ASV_WAVE_SIM_ROOT/gz-waves-models/worlds/waves.sdf"
 BLUEBOAT_MODEL="$SITL_MODELS_ROOT/Gazebo/models/blueboat/model.sdf"
 for cmd in gz python3; do
@@ -18,20 +18,37 @@ done
 [[ -f "$BLUEBOAT_MODEL" ]] || { echo "Missing BlueBoat model: $BLUEBOAT_MODEL" >&2; exit 1; }
 [[ -f "$WAVES_WORLD" ]] || { echo "Missing upstream Wave Sim world: $WAVES_WORLD" >&2; exit 1; }
 [[ -d "$ARDUPILOT_GAZEBO_BUILD" ]] || { echo "Missing compiled ArduPilot Gazebo plugin build directory" >&2; exit 1; }
-if ! find "$ARDUPILOT_GAZEBO_BUILD" -maxdepth 2 -type f \( -name '*.so' -o -name '*.dylib' \) | grep -q .; then
+if ! find -L "$ARDUPILOT_GAZEBO_BUILD" -maxdepth 4 -type f \( -name '*.so' -o -name '*.dylib' \) | grep -q .; then
   echo "No compiled Gazebo plugin shared libraries: $ARDUPILOT_GAZEBO_BUILD" >&2
   exit 1
 fi
 [[ -d "$ASV_WAVE_SIM_PLUGIN_DIR" ]] || {
   echo "Missing ASV Wave Sim compiled hydrodynamics plugin directory" >&2; exit 1;
 }
-if ! find "$ASV_WAVE_SIM_PLUGIN_DIR" -maxdepth 6 -type f -name '*hydrodynamics*.so' | grep -q .; then
+if ! find -L "$ASV_WAVE_SIM_PLUGIN_DIR" -maxdepth 6 -type f -name '*hydrodynamics*.so' | grep -q .; then
   echo "No compiled ASV Wave Sim hydrodynamics shared library was found" >&2
+  exit 1
+fi
+# The simulation may find the plugin itself but fail to resolve its
+# transitive libgz-waves1.so.1 dependency. Reject that before any test run.
+WAVES_HYDRO_PLUGIN="$(find -L "$ASV_WAVE_SIM_PLUGIN_DIR" -maxdepth 6 \
+  -type f -name '*hydrodynamics*.so' -print -quit)"
+WAVES_DEPS="$(LD_LIBRARY_PATH="$ASV_WAVE_SIM_PLUGIN_DIR:${LD_LIBRARY_PATH:-}" \
+  ldd "$WAVES_HYDRO_PLUGIN")"
+if printf '%s\\n' "$WAVES_DEPS" | grep -q 'not found'; then
+  printf '%s\\n' "$WAVES_DEPS" >&2
+  echo "Unresolved Wave Sim runtime dependency; refusing to run" >&2
   exit 1
 fi
 grep -q 'gz-waves1-hydrodynamics-system' "$BLUEBOAT_MODEL" || {
   echo "BlueBoat model does not reference expected wave hydrodynamics plugin" >&2
   exit 1
+}
+grep -q 'filename="ArduPilotPlugin"' "$BLUEBOAT_MODEL" || {
+  echo "ArduPilot JSON bridge missing in BlueBoat SDF" >&2; exit 1;
+}
+grep -q 'cmd_thrust' "$BLUEBOAT_MODEL" || {
+  echo "BlueBoat SDF missing commanded propulsor channels" >&2; exit 1;
 }
 OUTPUT="${BLUEBOAT_PREPARED_WORLD:-$ROOT/build-blueboat/waves_with_blueboat.sdf}"
 python3 "$ROOT/tools/gazebo/prepare_blueboat_world.py" \

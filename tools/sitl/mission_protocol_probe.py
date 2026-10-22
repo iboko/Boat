@@ -37,7 +37,9 @@ def receive(link, allowed, timeout_s):
     raise TimeoutError("MAVLink timeout waiting for " + ", ".join(sorted(allowed)))
 
 
-def upload_and_verify(link):
+def upload_and_verify(link, home_tolerance_1e7=2):
+    # The first stored item may be replaced by ArduPilot's actual HOME.
+    # Allow a measured floating-model offset at index 0 only, never en-route.
     target_sys, target_comp = link.target_system, link.target_component
     kind = mavutil.mavlink.MAV_MISSION_TYPE_MISSION
     route = mission_waypoints()
@@ -90,7 +92,8 @@ def upload_and_verify(link):
         item = receive(link, {"MISSION_ITEM_INT"}, 8)
         if int(item.seq) != idx:
             raise RuntimeError(f"Unexpected readback sequence {item.seq} != {idx}")
-        if abs(int(item.x)-route[idx][0]) > 2 or abs(int(item.y)-route[idx][1]) > 2:
+        tolerance = home_tolerance_1e7 if idx == 0 else 2
+        if abs(int(item.x)-route[idx][0]) > tolerance or abs(int(item.y)-route[idx][1]) > tolerance:
             raise RuntimeError(f"Readback coordinate mismatch at {idx}: got=({item.x},{item.y}) expected=({route[idx][0]},{route[idx][1]}) frame={item.frame} command={item.command}")
         readback.append({"sequence": idx, "latitude_1e7": int(item.x),
                          "longitude_1e7": int(item.y)})

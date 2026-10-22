@@ -30,6 +30,8 @@ def main():
     parser.add_argument("--sitl-only", action="store_true")
     parser.add_argument("--bridge-mode",choices=("direct-truth","sensor-eskf","sensor-blackout"),default="direct-truth")
     parser.add_argument("--duration", type=int, default=135)
+    parser.add_argument("--gazebo-truth-file", type=Path,
+        help="require recent live BlueBoat Gazebo pose stream before mission writes/ARM")
     parser.add_argument("--cpp-bridge", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
@@ -68,7 +70,35 @@ def main():
     require(physics_proof, "refusing any mission mutation: SITL physical truth not verified")
     print("SITL_PHYSICS_PROOF_BEFORE_MISSION_MUTATION",flush=True)
 
-    uploaded = upload_and_verify(link)
+    if args.gazebo_truth_file is not None:
+        # A SIM_STATE message by itself is NOT proof of Gazebo. The
+        # independent gz topic monitor must be alive and reporting physics.
+        gaze_verified = False
+        gaze_deadline = time.monotonic() + 18.0
+        while time.monotonic() < gaze_deadline:
+            try:
+                recent = [json.loads(item) for item in
+                          args.gazebo_truth_file.read_text(encoding="utf-8").splitlines()[-10:]]
+                gaze_verified = len(recent) >= 6 and all(
+                    entry.get("source") == "Gazebo BlueBoat" and
+                    all(math.isfinite(float(entry[field])) for field in
+                        ("x", "y", "z", "monotonic_s")) and abs(float(entry['z'])) < 3.0
+                    for entry in recent
+                ) and (time.monotonic()-recent[-1]["monotonic_s"] < 4.0)
+            except (OSError, KeyError, TypeError, ValueError, OverflowError):
+                gaze_verified = False
+            if gaze_verified:
+                break
+            time.sleep(0.3)
+        require(gaze_verified,
+                "refusing mission mutation: actual live Gazebo BlueBoat world poses absent")
+        print("GAZEBO_BLUEBOAT_PHYSICS_PROOF_BEFORE_MISSION_MUTATION",flush=True)
+
+    # In a floating-body Gazebo world HOME is sampled from the actual model
+    # and may differ centimetres from the configured origin. Route waypoints
+    # 1/2/3 retain the original strict ±2e-7-degree readback tolerance.
+    home_tolerance=20 if args.gazebo_truth_file is not None else 2
+    uploaded = upload_and_verify(link,home_tolerance_1e7=home_tolerance)
     require(uploaded["mission_readback_verified"], "mission readback not confirmed")
     print("SITL_DYNAMIC_MISSION_UPLOADED", flush=True)
 
@@ -104,6 +134,7 @@ def main():
     truth_ekf_errors = []
     last_truth = None
     last_truth_monotonic = None
+    last_ardupilot_boot_ms = None
     start = time.monotonic()
     begun = None
     last_publish = 0.0
@@ -115,6 +146,7 @@ def main():
     hold_requested_at=None
     hold_confirmed_at=None
     hold_request_sent=False
+    radar_blackout_command_sent=False
     report_path = out / "dynamic_mission_report.json"
     csv_file = (out / "dynamic_sitl_truth.csv").open("w", newline="", encoding="utf-8")
     writer = csv.writer(csv_file)
@@ -167,6 +199,12 @@ def main():
                 continue
             typ=msg.get_type()
             if typ=="LOCAL_POSITION_NED":
+                # Gazebo JSON lockstep can run slower than wall time.
+                # AP_Arming requires 10 seconds of consistent dual IMUs
+                # on the firmware's own monotonic simulated clock.
+                boot_ms = int(msg.time_boot_ms)
+                if boot_ms >= 0:
+                    last_ardupilot_boot_ms = boot_ms
                 last_ekf=(float(msg.x),float(msg.y))
                 if last_truth is not None and last_truth_monotonic is not None and now-last_truth_monotonic<0.3:
                     truth_ekf_errors.append(math.hypot(last_ekf[0]-last_truth[0],last_ekf[1]-last_truth[1]))
@@ -186,6 +224,14 @@ def main():
                 mode_auto = bool((msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED) and int(msg.custom_mode)==10)
                 ever_armed = ever_armed or armed
                 ever_auto = ever_auto or mode_auto
+                if (args.bridge_mode=="sensor-blackout" and
+                    armed and mode_auto and not radar_blackout_command_sent):
+                    require(bridge is not None and bridge.stdin is not None,
+                            "C++ bridge unavailable at confirmed armed AUTO")
+                    bridge.stdin.write("RADAR_BLACKOUT\n")
+                    bridge.stdin.flush()
+                    radar_blackout_command_sent=True
+                    print("SITL_POST_ARM_RADAR_BLACKOUT_ACTIVATED",flush=True)
                 if hold_request_sent and int(msg.custom_mode)==4 and not mode_auto:
                     hold_confirmed_at=now
                     print("SITL_NAVIGATION_FAILSAFE_HOLD_CONFIRMED",flush=True)
@@ -237,7 +283,13 @@ def main():
                         nav_seq,round(max_dist_from_start,3),
                         *[round(x,3) for x in closest[1:]],
                     ])
-                if not command_sent and warm_samples>=25 and now-start>4.0:
+                clock_ready = (args.gazebo_truth_file is None or
+                    (last_ardupilot_boot_ms is not None and
+                     last_ardupilot_boot_ms >= 25000))
+                if not command_sent and warm_samples>=25 and now-start>4.0 and clock_ready:
+                    if args.gazebo_truth_file is not None:
+                        print("BLUEBOAT_IMU_25_SIMSECONDS_BEFORE_ARM boot_ms="+
+                              str(last_ardupilot_boot_ms),flush=True)
                     link.set_mode("AUTO")
                     # Valid, non-forced arming command. No altered safety checks.
                     link.mav.command_long_send(link.target_system,
@@ -260,8 +312,13 @@ def main():
             "bridge_mode":args.bridge_mode,
             "hold_request_sent":hold_request_sent,
             "hold_confirmed":hold_confirmed_at is not None,
+            "hold_confirmed_monotonic_s":hold_confirmed_at,
+            "hold_requested_monotonic_s":hold_requested_at,
+            "gazebo_verified_before_arm":args.gazebo_truth_file is not None,
+            "ardupilot_boot_ms_before_arm":last_ardupilot_boot_ms,
             "hold_latency_s":(round(hold_confirmed_at-hold_requested_at,3) if hold_confirmed_at is not None else None),
             "integrity_marker_observed":marker.is_file() if args.bridge_mode=="sensor-blackout" else False,
+            "radar_blackout_after_armed_auto":radar_blackout_command_sent,
             "gnss_from_ardupilot_parameters":"disabled in separate origin probe",
             "mission_loaded_and_readback":True,
             "mission_executed": bool(max_dist_from_start>15.0 and ever_armed and ever_auto),
@@ -283,6 +340,8 @@ def main():
         require(ever_armed and ever_auto,"Rover heartbeat did not confirm armed AUTO mode")
         require(len(truth_ekf_errors)>=20,"no paired EKF/physics trajectory measurements")
         if args.bridge_mode=="sensor-blackout":
+            require(radar_blackout_command_sent,
+                    "no armed AUTO confirmation before triggering synthetic radar loss")
             require(hold_request_sent and hold_confirmed_at is not None,
                     "loss of position did not move Rover into HOLD")
             require(hold_confirmed_at-hold_requested_at<=6.0,

@@ -41,43 +41,61 @@ python3 "$ROOT/tools/gazebo/tune_wave_scenario.py" \
   | tee "$OUT/wave_scenario.log"
 echo "Gazebo BlueBoat marine physics mode=$MODE; loopback only"
 cleanup() {
-  result=$?
-  # Explicitly terminate the ArduRover binary PID, not merely its
-  # launcher subshell. Gazebo's separate session also kills its children.
-  kill "${TRUTH_PID:-}" "${EKF_PID:-}" "${ROVER_PID:-}" 2>/dev/null || true
+  local result=$?
+  trap - EXIT
+  # Bound shutdown of every process. The previous cleanup sent TERM but
+  # then performed an unlimited wait on an ArduRover/JSON subprocess;
+  # after a completed route this could exhaust GitHub's 90-minute timeout.
+  echo "BLUEBOAT_CLEANUP_BEGIN mode=$MODE status=$result" >&2
+  local pid
+  for pid in "${TRUTH_PID:-}" "${EKF_PID:-}" "${ROVER_PID:-}"; do
+    if [[ -n "$pid" ]]; then kill -TERM "$pid" 2>/dev/null || true; fi
+  done
   if [[ -n "${GZ_PID:-}" ]]; then
-    kill -- "-$GZ_PID" 2>/dev/null || true
-    kill "$GZ_PID" 2>/dev/null || true
-    # Gazebo may block on JSON lockstep while a controller disconnects.
-    # Bound shutdown; never wait forever for a stopped simulated world.
-    for _ in $(seq 1 30); do
-      if ! kill -0 "$GZ_PID" 2>/dev/null; then break; fi
-      sleep 0.1
-    done
-    if kill -0 "$GZ_PID" 2>/dev/null; then
-      echo "Killing unresponsive Gazebo simulator process group" >&2
-      kill -KILL -- "-$GZ_PID" 2>/dev/null || true
-      kill -KILL "$GZ_PID" 2>/dev/null || true
-    fi
+    kill -TERM -- "-$GZ_PID" 2>/dev/null || true
+    kill -TERM "$GZ_PID" 2>/dev/null || true
   fi
-  wait "${TRUTH_PID:-}" 2>/dev/null || true
-  wait "${EKF_PID:-}" 2>/dev/null || true
-  wait "${ROVER_PID:-}" 2>/dev/null || true
-  wait "${GZ_PID:-}" 2>/dev/null || true
-  # Require that the next scenario may bind the same SITL endpoints.
-  for _ in $(seq 1 30); do
-    if ! (echo > /dev/tcp/127.0.0.1/5760) 2>/dev/null; then
-      break
-    fi
+
+  # TERM grace period, then SIGKILL remaining simulator processes. The
+  # Gazebo launcher is a dedicated process session (setsid).
+  local stop_at=$((SECONDS + 4))
+  while (( SECONDS < stop_at )); do
+    local running=0
+    for pid in "${TRUTH_PID:-}" "${EKF_PID:-}" "${ROVER_PID:-}" "${GZ_PID:-}"; do
+      if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        running=1
+      fi
+    done
+    [[ "$running" -eq 0 ]] && break
     sleep 0.2
   done
+  for pid in "${TRUTH_PID:-}" "${EKF_PID:-}" "${ROVER_PID:-}"; do
+    if [[ -n "$pid" ]]; then kill -KILL "$pid" 2>/dev/null || true; fi
+  done
+  if [[ -n "${GZ_PID:-}" ]]; then
+    kill -KILL -- "-$GZ_PID" 2>/dev/null || true
+    kill -KILL "$GZ_PID" 2>/dev/null || true
+  fi
+  # wait can now only reap already killed direct children.
+  for pid in "${TRUTH_PID:-}" "${EKF_PID:-}" "${ROVER_PID:-}" "${GZ_PID:-}"; do
+    if [[ -n "$pid" ]]; then wait "$pid" 2>/dev/null || true; fi
+  done
+
+  # Confirm old ArduRover cannot hold the ports for the next scenario.
+  if timeout 4 bash -c 'echo > /dev/tcp/127.0.0.1/5760' 2>/dev/null; then
+    echo "BLUEBOAT_CLEANUP_FAILED: MAVLink port 5760 remains occupied" >&2
+    result=15
+  fi
   if [[ $result -ne 0 ]]; then
     echo "Gazebo BlueBoat integration FAILED. See $OUT" >&2
     for name in gazebo.log rover.log ekf_origin.log dynamic_bridge.log mission.log truth.log; do
       echo "--- $name" >&2
       tail -n 25 "$OUT/$name" >&2 2>/dev/null || true
     done
+  else
+    echo "BLUEBOAT_CLEANUP_PASS mode=$MODE" >&2
   fi
+  exit "$result"
 }
 trap cleanup EXIT
 

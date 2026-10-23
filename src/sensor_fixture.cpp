@@ -24,6 +24,14 @@ ins::Vec3 periodicNoise(double t,double scale) {
 
 SyntheticSensors::SyntheticSensors(Scenario s):scenario_(s) {
     if(!(s.radar_period_s>0.0 && s.dvl_period_s>0.0 &&
+         valid(s.gnss_period_s) && s.gnss_period_s>0.0 &&
+         valid(s.gnss_dropout_from_s) && valid(s.gnss_dropout_until_s) &&
+         s.gnss_dropout_from_s<=s.gnss_dropout_until_s &&
+         valid(s.max_dead_reckoning_s) && s.max_dead_reckoning_s>=1.0 &&
+         s.max_dead_reckoning_s<=60.0 &&
+         valid(s.max_dead_reckoning_horizontal_sigma_m) &&
+         s.max_dead_reckoning_horizontal_sigma_m>=0.5 &&
+         s.max_dead_reckoning_horizontal_sigma_m<=20.0 &&
          s.radar_dropout_from_s<=s.radar_dropout_until_s &&
          s.bottom_dropout_from_s<=s.bottom_dropout_until_s &&
          valid(s.accel_bias_mps2)&&valid(s.gyro_bias_radps)&&
@@ -39,6 +47,14 @@ void SyntheticSensors::beginRadarBlackoutAfter(double now_s, double delay_s) {
         throw std::invalid_argument("invalid armed radar blackout trigger");
     scenario_.radar_dropout_from_s=now_s+delay_s;
     scenario_.radar_dropout_until_s=std::max(500.0,now_s+delay_s+60.0);
+}
+
+void SyntheticSensors::beginGnssBlackoutAfter(double now_s, double delay_s) {
+    if(scenario_.reference_mode!=ReferenceMode::OnboardDeadReckoning ||
+       !valid(now_s) || !valid(delay_s) || delay_s<0 || delay_s>30.0)
+        throw std::invalid_argument("invalid armed GNSS blackout trigger");
+    scenario_.gnss_dropout_from_s=now_s+delay_s;
+    scenario_.gnss_dropout_until_s=std::max(500.0,now_s+delay_s+60.0);
 }
 
 SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
@@ -91,7 +107,24 @@ SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
                                      ins::expRotation(tilt_noise))),
         0.025,true,true};
     result.attitude_fix_available=true;
-    if(t.time_s-last_radar_time_s>=scenario_.radar_period_s-0.00001) {
+    if(scenario_.reference_mode==ReferenceMode::OnboardDeadReckoning &&
+       t.time_s-last_gnss_time_s>=scenario_.gnss_period_s-0.00001) {
+        last_gnss_time_s=t.time_s;
+        if(dropout(t.time_s,scenario_.gnss_dropout_from_s,
+                            scenario_.gnss_dropout_until_s)) {
+            ++missing_gnss_count_;
+        } else {
+            // GNSS is independently noised test input, NOT direct position
+            // assignment into the ESKF or into MAVLink. No shore references.
+            result.gnss_fix={t.time_s,
+                t.position_ned_m+periodicNoise(t.time_s,0.22),
+                0.75,1.0,ins::AbsoluteSource::Gnss,true,true};
+            result.gnss_fix_available=true;
+            ++gnss_count_;
+        }
+    }
+    if(scenario_.reference_mode==ReferenceMode::ShoreAided &&
+       t.time_s-last_radar_time_s>=scenario_.radar_period_s-0.00001) {
         last_radar_time_s=t.time_s;
         if(dropout(t.time_s,scenario_.radar_dropout_from_s,
                              scenario_.radar_dropout_until_s)) {
@@ -140,36 +173,53 @@ SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
 }
 
 SensorFusion::SensorFusion(Scenario s):sensors_(s),
-    max_fix_age_s_(s.max_non_gnss_fix_age_s) {}
+    mode_(s.reference_mode),max_fix_age_s_(s.max_non_gnss_fix_age_s),
+    dead_reckoning_limit_s_(s.max_dead_reckoning_s),
+    dead_reckoning_sigma_limit_m_(s.max_dead_reckoning_horizontal_sigma_m) {}
 
 bool SensorFusion::step(const PhysicsFrame& truth) {
     latest_=sensors_.observe(truth);
     if(!latest_.valid) {++rejected_steps_;return false;}
     if(first_) {
-        if(!latest_.unlabelled_echoes.valid || !latest_.bottom_track_available) {
+        if(!latest_.bottom_track_available) {
             ++rejected_steps_;
             return false;
         }
-        // Only survey datum/vertical position and initial heading come
-        // from SITL test initialization. Horizontal position is computed
-        // solely by solving raw shoreline reflector ranges.
-        const auto associated=ShoreMapAssociator::associate(
-            latest_.unlabelled_echoes,{0,0,truth.position_ned_m.z});
-        if(!associated.valid){++rejected_steps_;return false;}
-        latest_.shore_ranges=associated.ranges;
-        latest_.unassociated_echoes=associated.unmatched;
-        const auto survey=ShoreRangeModel::solve(
-            latest_.shore_ranges,{0,0,truth.position_ned_m.z});
-        if(!survey.valid) {++rejected_steps_;return false;}
-        latest_.range_inliers=survey.inliers;
-        latest_.shore_fix={truth.time_s,survey.position_ned_m,
-            0.65,0.85,ins::AbsoluteSource::ShoreRadar,true,true};
-        latest_.shore_fix_available=true;
-        estimator_.initialize(truth.time_s,latest_.shore_fix.position_ned_m,
-             latest_.bottom_track.velocity_ned_mps,
-             ins::normalize(truth.body_to_ned),true);
-        if(!estimator_.correctPosition(latest_.shore_fix)) {
-            ++rejected_steps_;return false;
+        if(mode_==ReferenceMode::OnboardDeadReckoning) {
+            // Real equipment would require a verified geodetic origin and
+            // calibrated GNSS/IMU/DVL alignment before starting this mode.
+            if(!latest_.gnss_fix_available || !latest_.attitude_fix_available) {
+                ++rejected_steps_;return false;
+            }
+            estimator_.initialize(truth.time_s,latest_.gnss_fix.position_ned_m,
+                latest_.bottom_track.velocity_ned_mps,
+                ins::normalize(latest_.attitude.body_to_ned),true);
+            if(!estimator_.correctPosition(latest_.gnss_fix)) {
+                ++rejected_steps_;return false;
+            }
+        } else {
+            // Shore-aided baseline remains unchanged for v0.11 regression.
+            if(!latest_.unlabelled_echoes.valid) {
+                ++rejected_steps_;return false;
+            }
+            const auto associated=ShoreMapAssociator::associate(
+                latest_.unlabelled_echoes,{0,0,truth.position_ned_m.z});
+            if(!associated.valid){++rejected_steps_;return false;}
+            latest_.shore_ranges=associated.ranges;
+            latest_.unassociated_echoes=associated.unmatched;
+            const auto survey=ShoreRangeModel::solve(
+                latest_.shore_ranges,{0,0,truth.position_ned_m.z});
+            if(!survey.valid) {++rejected_steps_;return false;}
+            latest_.range_inliers=survey.inliers;
+            latest_.shore_fix={truth.time_s,survey.position_ned_m,
+                0.65,0.85,ins::AbsoluteSource::ShoreRadar,true,true};
+            latest_.shore_fix_available=true;
+            estimator_.initialize(truth.time_s,latest_.shore_fix.position_ned_m,
+                latest_.bottom_track.velocity_ned_mps,
+                ins::normalize(truth.body_to_ned),true);
+            if(!estimator_.correctPosition(latest_.shore_fix)) {
+                ++rejected_steps_;return false;
+            }
         }
         if(!estimator_.correctGroundVelocity(latest_.bottom_track)) {
             ++rejected_steps_;return false;
@@ -200,7 +250,9 @@ bool SensorFusion::step(const PhysicsFrame& truth) {
         (void)estimator_.correctGroundVelocity(latest_.bottom_track);
     // Water-track velocity is explicitly NOT passed to correctGroundVelocity.
     // No current estimator exists in this version.
-    if(latest_.unlabelled_echoes.valid) {
+    if(mode_==ReferenceMode::OnboardDeadReckoning && latest_.gnss_fix_available)
+        (void)estimator_.correctPosition(latest_.gnss_fix);
+    if(mode_==ReferenceMode::ShoreAided && latest_.unlabelled_echoes.valid) {
         const auto associated=ShoreMapAssociator::associate(
             latest_.unlabelled_echoes,estimator_.state().position_ned_m);
         if(associated.valid) {
@@ -221,12 +273,24 @@ bool SensorFusion::step(const PhysicsFrame& truth) {
 }
 
 bool SensorFusion::beginRadarBlackoutAfterArm() {
-    if(first_ || !estimator_.state().initialized) return false;
+    if(mode_!=ReferenceMode::ShoreAided || first_ ||
+       !estimator_.state().initialized) return false;
     sensors_.beginRadarBlackoutAfter(estimator_.state().time_s,6.0);
     return true;
 }
 
+bool SensorFusion::beginGnssBlackoutAfterArm() {
+    if(mode_!=ReferenceMode::OnboardDeadReckoning || first_ ||
+       !estimator_.state().initialized) return false;
+    sensors_.beginGnssBlackoutAfter(estimator_.state().time_s,6.0);
+    return true;
+}
+
 bool SensorFusion::integrity() const {
+    if(mode_==ReferenceMode::OnboardDeadReckoning)
+        return ins::assessDeadReckoning(estimator_.state(),
+            estimator_.state().time_s,
+            {dead_reckoning_sigma_limit_m_,dead_reckoning_limit_s_,0.2}).valid;
     ins::IntegrityPolicy policy{};
     policy.max_independent_fix_age_during_gnss_denial_s=max_fix_age_s_;
     return ins::assess(estimator_.state(),estimator_.state().time_s,

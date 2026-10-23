@@ -141,6 +141,17 @@ struct Integrity {
 Integrity assess(const State& state, double now_s, bool gnss_denied,
                  const IntegrityPolicy& policy = {});
 
+// Onboard-only, bounded dead reckoning after a verified initial GNSS fix.
+// A bottom-track DVL supplies ground velocity but NOT absolute position;
+// neither DVL nor compass refreshes the last GNSS position-fix timestamp.
+struct DeadReckoningPolicy {
+    double max_horizontal_sigma_m{6.0};
+    double max_gnss_fix_age_s{12.0};
+    double max_state_age_s{0.2};
+};
+Integrity assessDeadReckoning(const State& state, double now_s,
+                             const DeadReckoningPolicy& policy = {});
+
 // Translation only. No direct motor commands and no automatic ArduPilot publish.
 NavigationState makePlanarSnapshot(const State& state);
 

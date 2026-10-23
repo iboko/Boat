@@ -46,15 +46,22 @@ def assess(truth, mission, mode, drift_seconds):
     motion_min=5.0 if mode=="route" else 0.5
     if max_motion < motion_min:
         raise ValueError(f"BlueBoat Gazebo physical movement too small for {mode}: {max_motion:.2f}m")
-    required_bridge = "sensor-eskf" if mode == "route" else "sensor-blackout"
+    onboard = bool(mission.get("onboard_without_shore"))
+    if onboard:
+        required_bridge = "onboard-route" if mode == "route" else "onboard-blackout"
+    else:
+        required_bridge = "sensor-eskf" if mode == "route" else "sensor-blackout"
     if mission.get("bridge_mode") != required_bridge:
         raise ValueError(f"expected C++ {required_bridge}, got {mission.get('bridge_mode')}")
+    if onboard and mode == "hold" and not mission.get("gnss_blackout_after_armed_auto"):
+        raise ValueError("onboard HOLD lacks post-ARM GNSS blackout evidence")
     if not mission.get("armed_heartbeat_observed") or not mission.get("auto_heartbeat_observed"):
         raise ValueError("no evidence of ArduPilot armed AUTO")
     result = {"truth_source":"Gazebo BlueBoat actual model odometry",
               "physics_samples":len(truth),
               "model_max_displacement_m":round(max_motion,3),
               "mission_check":mode,
+              "onboard_without_shore":onboard,
               "not_rover_simstate_only":True}
     if mode == "route":
         if not set((1,2,3)).issubset(mission.get("mission_reached_events",[])):

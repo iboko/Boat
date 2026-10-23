@@ -41,6 +41,10 @@ struct ExternalNavEvidence {
     bool fixed_surveyed_origin{false};
     bool shore_sensor_independent_of_gnss{false};
     bool gnss_denied{true};
+    // Only for onboard IMU + bottom-track DVL + compass, after an accepted
+    // real/simulated GNSS fix. This NEVER bypasses the time/covariance gate.
+    bool bounded_onboard_dead_reckoning{false};
+    double max_dead_reckoning_age_s{12.0};
 };
 bool makeOdometry(const ins::State& state, const ins::ImuSample& latest_imu,
                   double now_s, const ExternalNavEvidence& evidence,

@@ -329,6 +329,27 @@ Integrity assess(const State& s, double now_s, bool gnss_denied, const Integrity
     return {true,"research navigation estimate available"};
 }
 
+Integrity assessDeadReckoning(const State& s, double now_s,
+                             const DeadReckoningPolicy& p) {
+    if (!finite(p.max_horizontal_sigma_m) || p.max_horizontal_sigma_m<=0.0 ||
+        !finite(p.max_gnss_fix_age_s) || p.max_gnss_fix_age_s<=0.0 ||
+        p.max_gnss_fix_age_s>60.0 || !finite(p.max_state_age_s) ||
+        p.max_state_age_s<0.0)
+        return {false,"invalid dead-reckoning safety limits"};
+    if (!s.initialized || !s.origin_fixed_and_aligned)
+        return {false,"INS uninitialized or origin unaligned"};
+    if (!finite(now_s) || !finite(s.time_s) || now_s<s.time_s ||
+        now_s-s.time_s>p.max_state_age_s)
+        return {false,"INS state expired"};
+    if (!finite(s.last_gnss_fix_s) || s.last_gnss_fix_s>now_s ||
+        now_s-s.last_gnss_fix_s>p.max_gnss_fix_age_s)
+        return {false,"GNSS dead-reckoning time budget exhausted"};
+    const double sigma=ErrorStateIns::horizontalSigmaM(s);
+    if (!finite(sigma) || sigma>p.max_horizontal_sigma_m)
+        return {false,"dead-reckoning position uncertainty exceeded"};
+    return {true,"bounded onboard dead reckoning"};
+}
+
 NavigationState makePlanarSnapshot(const State& s) {
     NavigationState out{};
     out.initialized=s.initialized && s.origin_fixed_and_aligned;

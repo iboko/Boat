@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+project(boat_gazebo_environment LANGUAGES CXX)
+find_package(gz-sim8 REQUIRED)
+add_library(boat_environment_forces SHARED environment_forces.cpp)
+target_compile_features(boat_environment_forces PRIVATE cxx_std_17)
+target_link_libraries(boat_environment_forces PRIVATE gz-sim8::gz-sim8)
+target_compile_options(boat_environment_forces PRIVATE -Wall -Wextra -Wpedantic)

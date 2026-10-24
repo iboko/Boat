@@ -228,11 +228,11 @@ int main(int argc,char** argv) {
              <<" radar_fixes="<<fusion.generator().shoreCount()
              <<" dvl_fixes="<<fusion.generator().dvlCount()
              <<" radar_dropouts="<<fusion.generator().missedShoreCount()
-             <<" gnss_fixes="<<fusion.generator().gnssCount()
-             <<" gnss_dropouts="<<fusion.generator().missedGnssCount()
              <<" dvl_dropouts="<<fusion.generator().missedDvlCount()
              <<" water_mode="<<fusion.generator().waterModeCount()
              <<" radar_range_outliers="<<fusion.generator().radarOutlierCount()
+             <<" gnss_fixes="<<fusion.generator().gnssCount()
+             <<" gnss_dropouts="<<fusion.generator().missedGnssCount()
              <<" max_eskf_truth_error_m="<<max_estimation_error
              <<" attitude_aided="<<fusion.acceptedAttitudes()
              <<" attitude_rejected="<<fusion.rejectedAttitudes()

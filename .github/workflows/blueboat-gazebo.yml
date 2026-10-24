@@ -41,12 +41,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gz-harmonic libgz-sim8-dev rapidjson-dev \
             libcgal-dev libfftw3-dev libboost-all-dev \
-            cmake build-essential pkg-config python3-pip
+            cmake build-essential pkg-config python3-pip ffmpeg fonts-dejavu-core
           # Official ArduPilot Gazebo plugin needs OpenCV/GStreamer headers even
           # when we execute only the headless physics server.
           sudo apt-get install -y libunwind-dev
           sudo apt-get install -y libopencv-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
           python3 -m pip install --user --disable-pip-version-check colcon-common-extensions
+          python3 -m pip install --user --disable-pip-version-check "Pillow>=10,<13"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           gz sim --versions
       - name: Checkout physical BlueBoat, ASV Wave Sim and ArduPilot Gazebo bridge
@@ -103,6 +104,8 @@ jobs:
           chmod +x Boat/sitl-smoke-output/ardurover
       - name: Verify Gazebo test runner shell syntax
         run: bash -n Boat/tools/gazebo/run_blueboat_auto.sh
+      - name: Validate MP4 renderer against synthetic test fixture only
+        run: python3 Boat/tools/gazebo/test_render_blueboat_video.py
       - name: Validate genuine BlueBoat Gazebo dependencies
         working-directory: Boat
         run: bash tools/gazebo/check_blueboat.sh --check-only
@@ -132,7 +135,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: boat-v012-genuine-gazebo-blueboat
+          name: boat-v013-genuine-gazebo-blueboat-with-mp4
           path: |
             blueboat-output/
             Boat/sitl-smoke-output/ardurover-git-version.txt

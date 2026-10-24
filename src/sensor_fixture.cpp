@@ -57,6 +57,18 @@ void SyntheticSensors::beginGnssBlackoutAfter(double now_s, double delay_s) {
     scenario_.gnss_dropout_until_s=std::max(500.0,now_s+delay_s+60.0);
 }
 
+void SyntheticSensors::beginGnssBriefOutageAfter(double now_s,
+                                                double delay_s,
+                                                double duration_s) {
+    if(scenario_.reference_mode!=ReferenceMode::OnboardDeadReckoning ||
+       !valid(now_s) || !valid(delay_s) || !valid(duration_s) ||
+       delay_s<0.0 || delay_s>30.0 ||
+       duration_s<1.0 || duration_s>10.0)
+        throw std::invalid_argument("invalid brief GNSS outage trigger");
+    scenario_.gnss_dropout_from_s=now_s+delay_s;
+    scenario_.gnss_dropout_until_s=now_s+delay_s+duration_s;
+}
+
 SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
     SensorSet result{};
     if(!valid(t.time_s)||!valid(t.position_ned_m)||
@@ -269,6 +281,14 @@ bool SensorFusion::step(const PhysicsFrame& truth) {
             }
         }
     }
+    if(brief_gnss_triggered_) {
+        brief_gnss_loss_seen_ = brief_gnss_loss_seen_ ||
+            sensors_.missedGnssCount()>brief_gnss_missed_before_;
+        if(brief_gnss_loss_seen_ && latest_.gnss_fix_available &&
+           std::abs(estimator_.state().last_gnss_fix_s-
+                    latest_.gnss_fix.time_s)<1.e-6)
+            brief_gnss_recovered_=true;
+    }
     return true;
 }
 
@@ -283,6 +303,16 @@ bool SensorFusion::beginGnssBlackoutAfterArm() {
     if(mode_!=ReferenceMode::OnboardDeadReckoning || first_ ||
        !estimator_.state().initialized) return false;
     sensors_.beginGnssBlackoutAfter(estimator_.state().time_s,6.0);
+    return true;
+}
+
+bool SensorFusion::beginGnssBriefOutageAfterArm() {
+    if(mode_!=ReferenceMode::OnboardDeadReckoning || first_ ||
+       brief_gnss_triggered_ ||
+       !estimator_.state().initialized) return false;
+    sensors_.beginGnssBriefOutageAfter(estimator_.state().time_s,1.0,3.0);
+    brief_gnss_triggered_=true;
+    brief_gnss_missed_before_=sensors_.missedGnssCount();
     return true;
 }
 

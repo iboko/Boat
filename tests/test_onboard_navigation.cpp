@@ -55,6 +55,38 @@ int main() {
         require(std::hypot(p.x-30.0,p.y)<2.0,
                 "onboard estimated position diverged in simple fixture");
 
+        // The integration runner schedules this outage only after Rover
+        // has confirmed ARMED + AUTO. Coasting must remain bounded and
+        // the renewed GNSS corrections must subsequently be accepted.
+        Scenario post_arm=scenario;
+        post_arm.gnss_dropout_from_s=600.0;
+        post_arm.gnss_dropout_until_s=600.0;
+        SensorFusion active_route(post_arm);
+        unsigned missed_before=0;
+        for(int i=0;i<=350;++i) {
+            const double t=i*0.1;
+            require(active_route.step(frame(t)),
+                    "post-ARM short-outage C++ estimator rejected sample");
+            if(i==200) {
+                missed_before=active_route.generator().missedGnssCount();
+                require(active_route.beginGnssBriefOutageAfterArm(),
+                        "post-ARM brief GNSS dropout not accepted");
+            }
+            if(i>=200 && i<=260)
+                require(active_route.integrity(),
+                        "brief GNSS loss must preserve bounded route integrity");
+        }
+        require(active_route.generator().missedGnssCount()>missed_before,
+                "post-ARM brief GNSS loss did not suppress any GNSS fixes");
+        require(active_route.briefGnssOutageCompleted(),
+                "post-ARM GNSS loss was not followed by an accepted GNSS fix");
+        require(!active_route.beginGnssBriefOutageAfterArm(),
+                "a second post-ARM brief outage directive was accepted");
+        require(active_route.state().last_gnss_fix_s>30.0,
+                "GNSS did not reacquire after post-ARM brief loss");
+        require(active_route.generator().shoreCount()==0,
+                "post-ARM route unexpectedly required shoreline reflectors");
+
         Scenario lost=scenario;
         lost.gnss_dropout_from_s=10.0;
         lost.gnss_dropout_until_s=200.0;
@@ -81,6 +113,8 @@ int main() {
         SensorFusion unaligned(no_initial_fix);
         require(!unaligned.step(frame(0.0)) && !unaligned.integrity(),
                 "uninitialized no-shore INS must fail closed without GNSS origin");
+        require(!unaligned.beginGnssBriefOutageAfterArm(),
+                "brief outage was accepted before GNSS origin initialization");
 
         Scenario water=lost;
         water.bottom_dropout_from_s=9.0;

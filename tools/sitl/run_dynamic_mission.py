@@ -151,6 +151,7 @@ def main():
     onboard_mode=args.bridge_mode.startswith("onboard-")
     blackout_mode=args.bridge_mode in ("sensor-blackout","onboard-blackout")
     blackout_command_sent=False
+    brief_outage_command_sent=False
     report_path = out / "dynamic_mission_report.json"
     csv_file = (out / "dynamic_sitl_truth.csv").open("w", newline="", encoding="utf-8")
     writer = csv.writer(csv_file)
@@ -240,6 +241,14 @@ def main():
                     blackout_command_sent=True
                     print("SITL_POST_ARM_"+("GNSS" if onboard_mode else "RADAR")+
                           "_BLACKOUT_ACTIVATED",flush=True)
+                if (args.bridge_mode=="onboard-route" and armed and mode_auto and
+                    not brief_outage_command_sent):
+                    require(bridge is not None and bridge.stdin is not None,
+                            "C++ bridge unavailable for post-ARM GNSS outage")
+                    bridge.stdin.write("GNSS_BRIEF_OUTAGE\n")
+                    bridge.stdin.flush()
+                    brief_outage_command_sent=True
+                    print("SITL_POST_ARM_GNSS_BRIEF_OUTAGE_ACTIVATED",flush=True)
                 if hold_request_sent and int(msg.custom_mode)==4 and not mode_auto:
                     hold_confirmed_at=now
                     print("SITL_NAVIGATION_FAILSAFE_HOLD_CONFIRMED",flush=True)
@@ -331,6 +340,7 @@ def main():
             "integrity_marker_observed":marker.is_file() if blackout_mode else False,
             "radar_blackout_after_armed_auto":blackout_command_sent and not onboard_mode,
             "gnss_blackout_after_armed_auto":blackout_command_sent and onboard_mode,
+            "gnss_brief_outage_after_armed_auto":brief_outage_command_sent,
             "gnss_from_ardupilot_parameters":"disabled in separate origin probe",
             "mission_loaded_and_readback":True,
             "mission_executed": bool(max_dist_from_start>15.0 and ever_armed and ever_auto),
@@ -368,6 +378,9 @@ def main():
                 "moved_m":round(max_dist_from_start,2),
                 "reached_before_hold":sorted(reached)}),flush=True)
         else:
+            if args.bridge_mode=="onboard-route":
+                require(brief_outage_command_sent,
+                        "no verified armed AUTO before brief GNSS loss")
             if args.bridge_mode in ("sensor-eskf","onboard-route"):
                 p95=sorted(truth_ekf_errors)[int(0.95*(len(truth_ekf_errors)-1))]
                 require(p95<5.0, f"ESKF SITL P95 position error too large: {p95:.2f} m")

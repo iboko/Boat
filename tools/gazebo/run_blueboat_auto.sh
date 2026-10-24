@@ -200,4 +200,10 @@ python3 "$ROOT/tools/gazebo/verify_blueboat_trial.py" \
   --truth "$OUT/gazebo_blueboat_truth.jsonl" \
   --mission "$OUT/dynamic_mission_report.json" \
   --mode "$MODE" --output "$OUT/gazebo_blueboat_verification.json"
+python3 "$ROOT/tools/gazebo/render_blueboat_video.py" \
+  --truth "$OUT/gazebo_blueboat_truth.jsonl" \
+  --mission "$OUT/dynamic_mission_report.json" \
+  --verification "$OUT/gazebo_blueboat_verification.json" \
+  --output "$OUT/blueboat_${NAVIGATION_MODE}_${MODE}.mp4" \
+  | tee "$OUT/video_render.log"
 echo "BLUEBOAT_GAZEBO_VALIDATED_$MODE (actual Gazebo physics, not Rover substitute)"

@@ -91,6 +91,7 @@ int main(int argc,char** argv) {
     boat::fixture::SensorFusion fusion{scenario};
     bool hold_marker_written=false;
     bool blackout_activated=false;
+    bool brief_outage_activated=false;
     std::size_t sent=0;
     std::size_t rejected_odometry=0;
     double max_estimation_error=0.0;
@@ -126,6 +127,17 @@ int main(int argc,char** argv) {
             blackout_activated=true;
             std::cerr<<(onboard?"GNSS_BLACKOUT":"RADAR_BLACKOUT")
                      <<"_AFTER_ARM_CONFIRMED now_s="
+                     <<fusion.state().time_s<<"\n";
+            continue;
+        }
+        if(line=="GNSS_BRIEF_OUTAGE") {
+            if(!onboard || blackout || brief_outage_activated ||
+               !fusion.beginGnssBriefOutageAfterArm()) {
+                std::cerr<<"FAIL: invalid brief GNSS outage directive\n";
+                return 13;
+            }
+            brief_outage_activated=true;
+            std::cerr<<"GNSS_BRIEF_OUTAGE_AFTER_ARM_CONFIRMED now_s="
                      <<fusion.state().time_s<<"\n";
             continue;
         }
@@ -237,6 +249,8 @@ int main(int argc,char** argv) {
              <<" attitude_aided="<<fusion.acceptedAttitudes()
              <<" attitude_rejected="<<fusion.rejectedAttitudes()
              <<" safety_blackout_triggered="<<int(hold_marker_written)
+             <<" brief_gnss_outage_triggered="<<int(brief_outage_activated)
+             <<" brief_gnss_recovery_confirmed="<<int(fusion.briefGnssOutageCompleted())
              <<" source="<<(onboard?"GNSS_IMU_compass_bottom_DVL_ESKF":
                       "anonymous_radar_map_association_IMU_DVL_ESKF")
              <<" simulated_sensors=true\n";
@@ -245,5 +259,7 @@ int main(int argc,char** argv) {
         fusion.generator().missedShoreCount()>0;
     return sent>=10 && missed_source &&
         (blackout ? (hold_marker_written && blackout_activated) :
-            fusion.generator().missedDvlCount()>0) ? 0:9;
+            fusion.generator().missedDvlCount()>0) &&
+        (!onboard || blackout ||
+         (brief_outage_activated && fusion.briefGnssOutageCompleted())) ? 0:9;
 }

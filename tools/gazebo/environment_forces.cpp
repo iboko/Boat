@@ -23,9 +23,12 @@ Vec quadratic(const Vec &velocity) {
 }
 
 Vec disturbance(const Vec &velocity, const Vec &flow, double coefficient) {
-  // Subtract the zero-environment value: upstream Wave Sim still owns
-  // baseline hull damping. Do not count its zero-flow resistance twice.
-  return coefficient * (quadratic(flow - velocity) - quadratic(-velocity));
+  // A physically passive relative-flow drag term. Crucially, when the
+  // hull outruns the flow this must oppose its velocity; subtracting a
+  // zero-flow reference instead led to an unstable accelerating force.
+  // Existing Wave Sim hull drag also remains active; coefficients here
+  // are experimental, not a calibrated decomposition of water resistance.
+  return coefficient * quadratic(flow - velocity);
 }
 
 double parameter(const std::shared_ptr<const sdf::Element> &sdf,

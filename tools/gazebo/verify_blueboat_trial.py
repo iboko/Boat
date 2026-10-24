@@ -55,6 +55,8 @@ def assess(truth, mission, mode, drift_seconds):
         raise ValueError(f"expected C++ {required_bridge}, got {mission.get('bridge_mode')}")
     if onboard and mode == "hold" and not mission.get("gnss_blackout_after_armed_auto"):
         raise ValueError("onboard HOLD lacks post-ARM GNSS blackout evidence")
+    if onboard and mode == "route" and not mission.get("gnss_brief_outage_after_armed_auto"):
+        raise ValueError("onboard route lacks post-ARM short GNSS outage evidence")
     if not mission.get("armed_heartbeat_observed") or not mission.get("auto_heartbeat_observed"):
         raise ValueError("no evidence of ArduPilot armed AUTO")
     result = {"truth_source":"Gazebo BlueBoat actual model odometry",

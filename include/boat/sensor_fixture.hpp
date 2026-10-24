@@ -62,6 +62,8 @@ public:
     SensorSet observe(const PhysicsFrame& truth);
     void beginRadarBlackoutAfter(double now_s, double delay_s=6.0);
     void beginGnssBlackoutAfter(double now_s, double delay_s=6.0);
+    void beginGnssBriefOutageAfter(double now_s, double delay_s=1.0,
+                                  double duration_s=3.0);
     bool initialized() const { return initialized_; }
     unsigned shoreCount() const { return shore_count_; }
     unsigned gnssCount() const { return gnss_count_; }
@@ -87,8 +89,8 @@ private:
     unsigned clutter_discard_count_{0};
 };
 
-// Interface accepts no GNSS input. First fix/attitude are synthetic
-// survey/compass initializations; subsequent navigation uses the ESKF.
+// Synthetic input channels are generated from physics truth, not real drivers.
+// In onboard mode GNSS fixes provide the origin and limited absolute updates.
 class SensorFusion {
 public:
     explicit SensorFusion(Scenario scenario = {});
@@ -98,6 +100,8 @@ public:
     bool integrity() const;
     bool beginRadarBlackoutAfterArm();
     bool beginGnssBlackoutAfterArm();
+    bool beginGnssBriefOutageAfterArm();
+    bool briefGnssOutageCompleted() const { return brief_gnss_recovered_; }
     ReferenceMode referenceMode() const { return mode_; }
     double maxDeadReckoningAgeS() const { return dead_reckoning_limit_s_; }
     double lastShoreFixTimeS() const { return estimator_.state().last_non_gnss_fix_s; }
@@ -118,6 +122,9 @@ private:
     bool first_{true};
     unsigned propagated_{0}, rejected_steps_{0};
     unsigned accepted_attitudes_{0}, rejected_attitudes_{0};
+    bool brief_gnss_triggered_{false}, brief_gnss_loss_seen_{false};
+    bool brief_gnss_recovered_{false};
+    unsigned brief_gnss_missed_before_{0};
 };
 
 } // namespace boat::fixture

@@ -39,7 +39,7 @@ jobs:
       - name: Validate BlueBoat Gazebo truth parsing and strict cross-simulator proof
         run: |
           python3 tools/gazebo/test_gazebo_truth.py
-          python3 -m py_compile tools/gazebo/gazebo_truth_monitor.py tools/gazebo/verify_blueboat_trial.py tools/sitl/run_dynamic_mission.py
+          python3 -m py_compile tools/gazebo/gazebo_truth_monitor.py tools/gazebo/verify_blueboat_trial.py tools/gazebo/render_blueboat_video.py tools/gazebo/test_render_blueboat_video.py tools/sitl/run_dynamic_mission.py
           bash -n tools/gazebo/run_blueboat_auto.sh
       - name: Save simulation trajectories
         uses: actions/upload-artifact@v4

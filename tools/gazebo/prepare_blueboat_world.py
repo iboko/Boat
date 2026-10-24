@@ -9,8 +9,20 @@ import argparse
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+ENVIRONMENTS = {
+    # XY are Gazebo world axes, not NED axes. Speeds in m/s.
+    "calm": (0.0, 0.0, 0.0, 0.0),
+    "current": (0.45, -0.25, 0.0, 0.0),
+    "wind": (0.0, 0.0, -4.0, 6.0),
+}
+PLUGIN_NAME = "boat::EnvironmentForces"
+PLUGIN_FILE = "libboat_environment_forces.so"
 
-def inject_blueboat(source: Path, destination: Path) -> None:
+
+def inject_blueboat(source: Path, destination: Path,
+                    environment: str = "calm") -> None:
+    if environment not in ENVIRONMENTS:
+        raise ValueError("unknown BlueBoat physics environment")
     root = ET.parse(source).getroot()
     if root.tag != "sdf":
         raise ValueError("Expected SDF root")
@@ -44,6 +56,24 @@ def inject_blueboat(source: Path, destination: Path) -> None:
             "0 0 0 0 0 90"
         )
         ET.SubElement(element, "uri").text = "model://blueboat"
+    # A separate world-scoped plugin acts on the real hull's base_link. We
+    # deliberately do not edit ArduPilot's upstream BlueBoat model or confuse
+    # wave-model wind_speed with a wind force on the hull.
+    for plugin in list(world.findall("plugin")):
+        if plugin.get("name") == PLUGIN_NAME:
+            world.remove(plugin)
+    if environment != "calm":
+        cx, cy, wx, wy = ENVIRONMENTS[environment]
+        plugin = ET.SubElement(world, "plugin", {
+            "name": PLUGIN_NAME, "filename": PLUGIN_FILE,
+        })
+        for name, number in (
+            ("current_x", cx), ("current_y", cy),
+            ("wind_x", wx), ("wind_y", wy),
+            ("current_coefficient", 80.0),
+            ("wind_coefficient", 0.55),
+        ):
+            ET.SubElement(plugin, name).text = f"{number:.6f}"
     destination.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(root).write(destination, encoding="utf-8",
                                xml_declaration=True)
@@ -53,12 +83,18 @@ def inject_blueboat(source: Path, destination: Path) -> None:
     assert {node.findtext("uri") for node in checked.findall("world/include")} == {
         "model://blueboat","model://waves"
     }, "unexpected colliding model in isolated BlueBoat world"
+    expected = 0 if environment == "calm" else 1
+    assert sum(node.get("name") == PLUGIN_NAME for node in
+               checked.findall("world/plugin")) == expected
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--upstream-world", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--environment", choices=tuple(ENVIRONMENTS),
+                        default="calm")
     args = parser.parse_args()
-    inject_blueboat(args.upstream_world, args.output)
-    print("BLUEBOAT_WORLD_PREPARED (not Gazebo execution):", args.output)
+    inject_blueboat(args.upstream_world, args.output, args.environment)
+    print("BLUEBOAT_WORLD_PREPARED (not Gazebo execution):", args.output,
+          "environment=", args.environment)

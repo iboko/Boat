@@ -10,6 +10,12 @@ SITL_MODELS_ROOT="${SITL_MODELS_ROOT:-$HOME/SITL_Models}"
 ASV_WAVE_SIM_ROOT="${ASV_WAVE_SIM_ROOT:-$HOME/asv_wave_sim}"
 ARDUPILOT_GAZEBO_BUILD="${ARDUPILOT_GAZEBO_BUILD:-$HOME/ardupilot_gazebo/build}"
 ASV_WAVE_SIM_PLUGIN_DIR="${ASV_WAVE_SIM_PLUGIN_DIR:-$HOME/gz_ws/install/lib}"
+BLUEBOAT_ENVIRONMENT="${BLUEBOAT_ENVIRONMENT:-calm}"
+BOAT_ENV_PLUGIN_DIR="${BOAT_ENV_PLUGIN_DIR:-$ROOT/build-gazebo-env}"
+case "$BLUEBOAT_ENVIRONMENT" in
+  calm|current|wind) ;;
+  *) echo "Unsupported BLUEBOAT_ENVIRONMENT: $BLUEBOAT_ENVIRONMENT" >&2; exit 2 ;;
+esac
 WAVES_WORLD="$ASV_WAVE_SIM_ROOT/gz-waves-models/worlds/waves.sdf"
 BLUEBOAT_MODEL="$SITL_MODELS_ROOT/Gazebo/models/blueboat/model.sdf"
 for cmd in gz python3; do
@@ -50,10 +56,17 @@ grep -q 'filename="ArduPilotPlugin"' "$BLUEBOAT_MODEL" || {
 grep -q 'cmd_thrust' "$BLUEBOAT_MODEL" || {
   echo "BlueBoat SDF missing commanded propulsor channels" >&2; exit 1;
 }
+if [[ "$BLUEBOAT_ENVIRONMENT" != "calm" ]]; then
+  [[ -s "$BOAT_ENV_PLUGIN_DIR/libboat_environment_forces.so" ]] || {
+    echo "Missing compiled physical environment plugin in $BOAT_ENV_PLUGIN_DIR" >&2; exit 1;
+  }
+fi
 OUTPUT="${BLUEBOAT_PREPARED_WORLD:-$ROOT/build-blueboat/waves_with_blueboat.sdf}"
 python3 "$ROOT/tools/gazebo/prepare_blueboat_world.py" \
-  --upstream-world "$WAVES_WORLD" --output "$OUTPUT"
+  --upstream-world "$WAVES_WORLD" --output "$OUTPUT" \
+  --environment "$BLUEBOAT_ENVIRONMENT"
 echo "PREPARED_GAZEBO_BLUEBOAT_WORLD=$OUTPUT"
+echo "BLUEBOAT_PHYSICAL_ENVIRONMENT=$BLUEBOAT_ENVIRONMENT"
 echo "Required for manual physics-only launch (not executed):"
 printf 'export GZ_SIM_RESOURCE_PATH="%s:%s:%s:${GZ_SIM_RESOURCE_PATH:-}"\n' \
  "$SITL_MODELS_ROOT/Gazebo/models" "$ASV_WAVE_SIM_ROOT/gz-waves-models/models" "$ASV_WAVE_SIM_ROOT/gz-waves-models/worlds"

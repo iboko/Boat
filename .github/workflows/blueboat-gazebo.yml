@@ -6,6 +6,11 @@ on:
       - 'tools/gazebo/**'
       - '.github/workflows/blueboat-gazebo.yml'
       - 'tools/sitl/run_dynamic_mission.py'
+      - 'apps/sitl_sensor_bridge.cpp'
+      - 'src/sensor_fixture.cpp'
+      - 'src/sitl_link.cpp'
+      - 'src/ins.cpp'
+      - 'include/boat/**'
       - 'tools/gazebo/blueboat_nogps.parm'
 
 jobs:
@@ -111,11 +116,23 @@ jobs:
         run: |
           BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output/hold" \
           timeout --signal=TERM --kill-after=15s 300s bash tools/gazebo/run_blueboat_auto.sh --sitl-only hold
+      - name: Execute BlueBoat AUTO with onboard GNSS, INS, compass and bottom-track DVL (no shore)
+        working-directory: Boat
+        run: |
+          BLUEBOAT_NAVIGATION_MODE=onboard \
+          BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output/onboard-route" \
+          timeout --signal=TERM --kill-after=15s 300s bash tools/gazebo/run_blueboat_auto.sh --sitl-only route
+      - name: Execute BlueBoat onboard GNSS blackout and physical drift after HOLD
+        working-directory: Boat
+        run: |
+          BLUEBOAT_NAVIGATION_MODE=onboard \
+          BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output/onboard-hold" \
+          timeout --signal=TERM --kill-after=15s 300s bash tools/gazebo/run_blueboat_auto.sh --sitl-only hold
       - name: Preserve genuine Gazebo physics reports even on failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: boat-v011-genuine-gazebo-blueboat
+          name: boat-v012-genuine-gazebo-blueboat
           path: |
             blueboat-output/
             Boat/sitl-smoke-output/ardurover-git-version.txt

@@ -55,14 +55,27 @@ assert any(r == 0 and d == 0 for r, d in zip(radar, dvl)), (
 )
 
 log = (root / "dynamic_bridge.log").read_text(encoding="utf-8")
-match = re.search(
-    r"SITL_SENSOR_ESKF packets=(\d+) blocked=(\d+) radar_fixes=(\d+) "
-    r"dvl_fixes=(\d+) radar_dropouts=(\d+) dvl_dropouts=(\d+) "
-    r"water_mode=(\d+) radar_range_outliers=(\d+)",
-    log)
-assert match, "sensor-ESKF source and diagnostics missing"
-packets, blocked, radar_count, dvl_count, missed_radar, missed_dvl, water_count, outlier_count = map(
-    int, match.groups())
+match = re.search(r"^SITL_SENSOR_ESKF\s+(.+)$", log, re.MULTILINE)
+assert match, "sensor-ESKF diagnostics missing"
+fields = dict(re.findall(r"([a-z_]+)=([^\s]+)", match.group(1)))
+required = ("packets", "blocked", "radar_fixes", "dvl_fixes",
+            "radar_dropouts", "dvl_dropouts", "water_mode",
+            "radar_range_outliers")
+assert all(field in fields for field in required), (
+    "sensor-ESKF diagnostic counters missing"
+)
+assert fields.get("source") == "anonymous_radar_map_association_IMU_DVL_ESKF", (
+    "sensor-ESKF source must be the synthetic shoreline radar and DVL fusion"
+)
+assert fields.get("simulated_sensors") == "true", (
+    "sensor-ESKF source was not identified as synthetic"
+)
+packets, blocked, radar_count, dvl_count, missed_radar, missed_dvl, water_count, outlier_count = (
+    int(fields[name]) for name in required
+)
+assert int(fields.get("gnss_fixes", "0")) == 0 and (
+    int(fields.get("gnss_dropouts", "0")) == 0
+), "shoreline regression unexpectedly used simulated GNSS"
 assert packets == sum(sent), "ODOMETRY counter does not match CSV"
 assert radar_count == sum(radar) and dvl_count == sum(dvl), (
     "sensor counter does not match CSV"

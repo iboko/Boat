@@ -50,15 +50,19 @@ bool parse(const std::string& line,Truth& t) {
 
 int main(int argc,char** argv) {
     // NEVER attach this fixture to actual radar/INS: it reads SITL physics truth.
-    const bool baseline=(argc==2 &&
+    const bool shore=(argc>=2 &&
         std::string(argv[1])=="--sitl-sensor-fusion-fixture");
-    const bool blackout=(argc==5 &&
-        std::string(argv[1])=="--sitl-sensor-fusion-fixture" &&
-        std::string(argv[2])=="--radar-blackout" &&
+    const bool onboard=(argc>=2 &&
+        std::string(argv[1])=="--sitl-onboard-navigation-fixture");
+    const bool baseline=argc==2 && (shore || onboard);
+    const bool blackout=(argc==5 && (shore || onboard) &&
+        std::string(argv[2])==(onboard?"--gnss-blackout":"--radar-blackout") &&
         std::string(argv[3])=="--hold-marker");
     if(!baseline && !blackout) {
-        std::cerr<<"Refusing non-SITL call: --sitl-sensor-fusion-fixture "
-                    "[--radar-blackout --hold-marker FILE]\n";
+        std::cerr<<"Refusing non-SITL call: "
+                    "--sitl-sensor-fusion-fixture [--radar-blackout --hold-marker FILE] "
+                    "OR --sitl-onboard-navigation-fixture "
+                    "[--gnss-blackout --hold-marker FILE]\n";
         return 2;
     }
     boat::sitl::TcpMavlinkLink link;
@@ -69,15 +73,24 @@ int main(int argc,char** argv) {
     std::cerr<<"SYNTHETIC_SENSORS_ESKF_CONNECTED target_sysid="<<unsigned(link.systemId())<<"\n";
     std::cerr.flush();
     boat::fixture::Scenario scenario{};
+    if(onboard) {
+        scenario.reference_mode=boat::fixture::ReferenceMode::OnboardDeadReckoning;
+    }
     if(blackout) {
-        // No dropout before an independent HEARTBEAT confirms ARM+AUTO.
-        scenario.radar_dropout_from_s=600.0;
-        scenario.radar_dropout_until_s=600.0;
-        scenario.max_non_gnss_fix_age_s=3.0;
+        // No test blackout before independently confirmed ARM+AUTO.
+        if(onboard) {
+            scenario.gnss_dropout_from_s=600.0;
+            scenario.gnss_dropout_until_s=600.0;
+            scenario.max_dead_reckoning_s=4.0;
+        } else {
+            scenario.radar_dropout_from_s=600.0;
+            scenario.radar_dropout_until_s=600.0;
+            scenario.max_non_gnss_fix_age_s=3.0;
+        }
     }
     boat::fixture::SensorFusion fusion{scenario};
     bool hold_marker_written=false;
-    bool radar_blackout_activated=false;
+    bool blackout_activated=false;
     std::size_t sent=0;
     std::size_t rejected_odometry=0;
     double max_estimation_error=0.0;
@@ -90,7 +103,7 @@ int main(int argc,char** argv) {
     std::cout<<"time_s,physics_truth_n,physics_truth_e,physics_truth_vn,physics_truth_ve,"
                 "eskf_n,eskf_e,estimate_error_m,odometry_sent,radar_fix,dvl_fix,"
                 "eskf_position_sigma_m,water_track,shore_ranges,shore_inliers,"
-                "raw_unlabeled_echoes,unmatched_echoes,nav_integrity\n";
+                "raw_unlabeled_echoes,unmatched_echoes,nav_integrity,gnss_fix\n";
     while(true) {
         pollfd fd{0,POLLIN,0};
         const int ready=::poll(&fd,1,3000);
@@ -101,14 +114,18 @@ int main(int argc,char** argv) {
         std::string line;
         if(!std::getline(std::cin,line))break;
         if(line.empty())continue;
-        if(line=="RADAR_BLACKOUT") {
-            if(!blackout || radar_blackout_activated ||
-               !fusion.beginRadarBlackoutAfterArm()) {
-                std::cerr<<"FAIL: invalid post-ARM radar blackout directive\n";
+        if(line=="RADAR_BLACKOUT" || line=="GNSS_BLACKOUT") {
+            const bool right_command=onboard ? line=="GNSS_BLACKOUT" :
+                                               line=="RADAR_BLACKOUT";
+            if(!blackout || blackout_activated || !right_command ||
+               !(onboard ? fusion.beginGnssBlackoutAfterArm() :
+                           fusion.beginRadarBlackoutAfterArm())) {
+                std::cerr<<"FAIL: invalid post-ARM sensor blackout directive\n";
                 return 12;
             }
-            radar_blackout_activated=true;
-            std::cerr<<"RADAR_BLACKOUT_AFTER_ARM_CONFIRMED now_s="
+            blackout_activated=true;
+            std::cerr<<(onboard?"GNSS_BLACKOUT":"RADAR_BLACKOUT")
+                     <<"_AFTER_ARM_CONFIRMED now_s="
                      <<fusion.state().time_s<<"\n";
             continue;
         }
@@ -155,9 +172,11 @@ int main(int argc,char** argv) {
         boat::sitl::ExternalNavEvidence evidence{};
         evidence.measured_vertical_position=true;
         evidence.attitude_aligned=true; // initial attitude from SIM fixture
-        evidence.fixed_surveyed_origin=true; // simulated surveyed local map
-        evidence.shore_sensor_independent_of_gnss=true; // GNSS not used
+        evidence.fixed_surveyed_origin=true; // simulated fixed NED origin
+        evidence.shore_sensor_independent_of_gnss=!onboard;
         evidence.gnss_denied=true;
+        evidence.bounded_onboard_dead_reckoning=onboard;
+        evidence.max_dead_reckoning_age_s=fusion.maxDeadReckoningAgeS();
         boat::ValidatedOdometry6D sample{};
         const bool safe=fusion.integrity();
         if(blackout && !safe && !hold_marker_written) {
@@ -167,7 +186,8 @@ int main(int argc,char** argv) {
                 return 11;
             }
             marker<<"INVALID_NAVIGATION time_s="<<t.elapsed
-                  <<" reason=shore_map_fix_stale\n";
+                  <<(onboard?" reason=dead_reckoning_limit_exceeded\n":
+                              " reason=shore_map_fix_stale\n");
             marker.close();
             std::cerr<<"NAVIGATION_INVALID_REQUIRES_HOLD time_s="
                      <<t.elapsed<<"\n";
@@ -198,7 +218,7 @@ int main(int argc,char** argv) {
                  <<fusion.sensors().range_inliers<<','
                  <<fusion.sensors().unlabelled_echoes.count<<','
                  <<fusion.sensors().unassociated_echoes<<','
-                 <<int(safe)<<"\n";
+                 <<int(safe)<<','<<int(fusion.sensors().gnss_fix_available)<<"\n";
         std::cout.flush();
         previous_t=t.elapsed;
         previous_n=north;previous_e=east;
@@ -211,13 +231,19 @@ int main(int argc,char** argv) {
              <<" dvl_dropouts="<<fusion.generator().missedDvlCount()
              <<" water_mode="<<fusion.generator().waterModeCount()
              <<" radar_range_outliers="<<fusion.generator().radarOutlierCount()
+             <<" gnss_fixes="<<fusion.generator().gnssCount()
+             <<" gnss_dropouts="<<fusion.generator().missedGnssCount()
              <<" max_eskf_truth_error_m="<<max_estimation_error
              <<" attitude_aided="<<fusion.acceptedAttitudes()
              <<" attitude_rejected="<<fusion.rejectedAttitudes()
              <<" safety_blackout_triggered="<<int(hold_marker_written)
-             <<" source=anonymous_radar_map_association_IMU_DVL_ESKF"
-             <<" no_GNSS=true real_sensors=false\n";
-    return sent>=10 && fusion.generator().missedShoreCount()>0 &&
-        (blackout ? (hold_marker_written && radar_blackout_activated) :
+             <<" source="<<(onboard?"GNSS_IMU_compass_bottom_DVL_ESKF":
+                      "anonymous_radar_map_association_IMU_DVL_ESKF")
+             <<" simulated_sensors=true\n";
+    const bool missed_source=onboard ?
+        fusion.generator().missedGnssCount()>0 :
+        fusion.generator().missedShoreCount()>0;
+    return sent>=10 && missed_source &&
+        (blackout ? (hold_marker_written && blackout_activated) :
             fusion.generator().missedDvlCount()>0) ? 0:9;
 }

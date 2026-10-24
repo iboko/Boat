@@ -153,12 +153,18 @@ bool TcpMavlinkLink::transmitOdometry(const ValidatedOdometry6D& s) {
 bool makeOdometry(const ins::State& s,const ins::ImuSample& imu,double now_s,
                   const ExternalNavEvidence& proof,ValidatedOdometry6D& out) {
     out={};
+    const bool onboard=proof.bounded_onboard_dead_reckoning;
+    const bool integrity=onboard ?
+        ins::assessDeadReckoning(s,now_s,
+           {6.0,proof.max_dead_reckoning_age_s,0.2}).valid :
+        ins::assess(s,now_s,proof.gnss_denied).valid;
     if(!proof.fixed_surveyed_origin || !proof.measured_vertical_position ||
        !proof.attitude_aligned || !s.origin_fixed_and_aligned || !imu.calibrated ||
        !finite(now_s) || !finite(imu.time_s) ||
        std::abs(s.time_s-imu.time_s)>0.025 ||
-       !ins::assess(s,now_s,proof.gnss_denied).valid ||
-       (proof.gnss_denied && !proof.shore_sensor_independent_of_gnss))return false;
+       !integrity ||
+       (proof.gnss_denied && !onboard &&
+        !proof.shore_sensor_independent_of_gnss))return false;
     const auto q=ins::normalize(s.body_to_ned);
     const double sinp=2.0*(q.w*q.y-q.z*q.x);
     if(std::abs(sinp)>1.0+1e-6)return false;
@@ -185,7 +191,7 @@ bool makeOdometry(const ins::State& s,const ins::ImuSample& imu,double now_s,
     out.origin_is_fixed_and_aligned=true;
     out.vertical_state_valid=true;
     out.full_attitude_valid=true;
-    out.independent_sensor_corrections_valid=!proof.gnss_denied ||
+    out.independent_sensor_corrections_valid=onboard || !proof.gnss_denied ||
                                             proof.shore_sensor_independent_of_gnss;
     return ArduPilotOdometryEncoder::eligible(out);
 }

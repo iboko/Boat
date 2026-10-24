@@ -28,7 +28,9 @@ def require(condition, message):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sitl-only", action="store_true")
-    parser.add_argument("--bridge-mode",choices=("direct-truth","sensor-eskf","sensor-blackout"),default="direct-truth")
+    parser.add_argument("--bridge-mode",choices=("direct-truth","sensor-eskf",
+                        "sensor-blackout","onboard-route","onboard-blackout"),
+                        default="direct-truth")
     parser.add_argument("--duration", type=int, default=135)
     parser.add_argument("--gazebo-truth-file", type=Path,
         help="require recent live BlueBoat Gazebo pose stream before mission writes/ARM")
@@ -146,7 +148,9 @@ def main():
     hold_requested_at=None
     hold_confirmed_at=None
     hold_request_sent=False
-    radar_blackout_command_sent=False
+    onboard_mode=args.bridge_mode.startswith("onboard-")
+    blackout_mode=args.bridge_mode in ("sensor-blackout","onboard-blackout")
+    blackout_command_sent=False
     report_path = out / "dynamic_mission_report.json"
     csv_file = (out / "dynamic_sitl_truth.csv").open("w", newline="", encoding="utf-8")
     writer = csv.writer(csv_file)
@@ -163,10 +167,12 @@ def main():
         if args.bridge_mode=="direct-truth":
             bridge_args.append("--sitl-dynamic-fixture")
         else:
-            bridge_args.append("--sitl-sensor-fusion-fixture")
-            if args.bridge_mode=="sensor-blackout":
+            bridge_args.append("--sitl-onboard-navigation-fixture" if onboard_mode
+                               else "--sitl-sensor-fusion-fixture")
+            if blackout_mode:
                 marker.unlink(missing_ok=True)
-                bridge_args.extend(["--radar-blackout","--hold-marker",
+                bridge_args.extend(["--gnss-blackout" if onboard_mode else
+                                    "--radar-blackout","--hold-marker",
                                     str(marker.resolve())])
         bridge=subprocess.Popen(
             bridge_args,
@@ -182,7 +188,7 @@ def main():
             except (OSError, ConnectionError) as exc:
                 raise RuntimeError("MAVLink SITL disconnected") from exc
             now=time.monotonic()
-            if args.bridge_mode=="sensor-blackout" and marker.is_file() and not hold_request_sent:
+            if blackout_mode and marker.is_file() and not hold_request_sent:
                 require(ever_armed and ever_auto,
                         "integrity violation occurred before armed AUTO")
                 require(marker.read_text().startswith("INVALID_NAVIGATION"),
@@ -224,14 +230,16 @@ def main():
                 mode_auto = bool((msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED) and int(msg.custom_mode)==10)
                 ever_armed = ever_armed or armed
                 ever_auto = ever_auto or mode_auto
-                if (args.bridge_mode=="sensor-blackout" and
-                    armed and mode_auto and not radar_blackout_command_sent):
+                if (blackout_mode and armed and mode_auto and
+                    not blackout_command_sent):
                     require(bridge is not None and bridge.stdin is not None,
                             "C++ bridge unavailable at confirmed armed AUTO")
-                    bridge.stdin.write("RADAR_BLACKOUT\n")
+                    bridge.stdin.write("GNSS_BLACKOUT\n" if onboard_mode
+                                       else "RADAR_BLACKOUT\n")
                     bridge.stdin.flush()
-                    radar_blackout_command_sent=True
-                    print("SITL_POST_ARM_RADAR_BLACKOUT_ACTIVATED",flush=True)
+                    blackout_command_sent=True
+                    print("SITL_POST_ARM_"+("GNSS" if onboard_mode else "RADAR")+
+                          "_BLACKOUT_ACTIVATED",flush=True)
                 if hold_request_sent and int(msg.custom_mode)==4 and not mode_auto:
                     hold_confirmed_at=now
                     print("SITL_NAVIGATION_FAILSAFE_HOLD_CONFIRMED",flush=True)
@@ -301,15 +309,18 @@ def main():
                     command_at=now  # confirmation requires HEARTBEAT, not the request itself
                 if command_sent and not ever_armed and now-command_at>25.0:
                     raise RuntimeError("ordinary arming not confirmed; status: "+str(statuses[-10:]))
-                if args.bridge_mode!="sensor-blackout" and max_dist_from_start>15.0 and all(x<2.5 for x in closest[1:]) and (len(targets)-1) in reached and ever_armed and ever_auto:
+                if not blackout_mode and max_dist_from_start>15.0 and all(x<2.5 for x in closest[1:]) and (len(targets)-1) in reached and ever_armed and ever_auto:
                     print("SITL_DYNAMIC_PHYSICS_WAYPOINTS_VISITED",flush=True)
                     break
             if bridge and bridge.poll() is not None:
                 raise RuntimeError(f"C++ bridge exited early with code {bridge.returncode}")
 
         result={
-            "fixture":("SITL physics truth -> simulated noisy IMU/shore radar/bottom DVL -> C++ 15-state ESKF -> MAVLink" if args.bridge_mode=="sensor-eskf" else "SITL physics truth -> C++ synthetic ODOMETRY"),
+            "fixture":("SITL physics truth -> virtual initial GNSS/IMU/compass/bottom DVL -> C++ ESKF -> MAVLink; no shore" if onboard_mode else
+                       "SITL physics truth -> simulated noisy IMU/shore radar/bottom DVL -> C++ 15-state ESKF -> MAVLink" if args.bridge_mode!="direct-truth" else
+                       "SITL physics truth -> C++ synthetic ODOMETRY"),
             "bridge_mode":args.bridge_mode,
+            "onboard_without_shore":onboard_mode,
             "hold_request_sent":hold_request_sent,
             "hold_confirmed":hold_confirmed_at is not None,
             "hold_confirmed_monotonic_s":hold_confirmed_at,
@@ -317,8 +328,9 @@ def main():
             "gazebo_verified_before_arm":args.gazebo_truth_file is not None,
             "ardupilot_boot_ms_before_arm":last_ardupilot_boot_ms,
             "hold_latency_s":(round(hold_confirmed_at-hold_requested_at,3) if hold_confirmed_at is not None else None),
-            "integrity_marker_observed":marker.is_file() if args.bridge_mode=="sensor-blackout" else False,
-            "radar_blackout_after_armed_auto":radar_blackout_command_sent,
+            "integrity_marker_observed":marker.is_file() if blackout_mode else False,
+            "radar_blackout_after_armed_auto":blackout_command_sent and not onboard_mode,
+            "gnss_blackout_after_armed_auto":blackout_command_sent and onboard_mode,
             "gnss_from_ardupilot_parameters":"disabled in separate origin probe",
             "mission_loaded_and_readback":True,
             "mission_executed": bool(max_dist_from_start>15.0 and ever_armed and ever_auto),
@@ -339,8 +351,8 @@ def main():
         require(warm_samples>=30,"too few dynamic truth samples")
         require(ever_armed and ever_auto,"Rover heartbeat did not confirm armed AUTO mode")
         require(len(truth_ekf_errors)>=20,"no paired EKF/physics trajectory measurements")
-        if args.bridge_mode=="sensor-blackout":
-            require(radar_blackout_command_sent,
+        if blackout_mode:
+            require(blackout_command_sent,
                     "no armed AUTO confirmation before triggering synthetic radar loss")
             require(hold_request_sent and hold_confirmed_at is not None,
                     "loss of position did not move Rover into HOLD")
@@ -356,7 +368,7 @@ def main():
                 "moved_m":round(max_dist_from_start,2),
                 "reached_before_hold":sorted(reached)}),flush=True)
         else:
-            if args.bridge_mode=="sensor-eskf":
+            if args.bridge_mode in ("sensor-eskf","onboard-route"):
                 p95=sorted(truth_ekf_errors)[int(0.95*(len(truth_ekf_errors)-1))]
                 require(p95<5.0, f"ESKF SITL P95 position error too large: {p95:.2f} m")
             require(max_dist_from_start>15.0,

@@ -8,6 +8,11 @@ if [[ "$#" -ne 2 || "${1:-}" != "--sitl-only" ||
   exit 2
 fi
 MODE="$2"
+NAVIGATION_MODE="${BLUEBOAT_NAVIGATION_MODE:-shore}"
+if [[ "$NAVIGATION_MODE" != "shore" && "$NAVIGATION_MODE" != "onboard" ]]; then
+  echo "BLUEBOAT_NAVIGATION_MODE must be shore or onboard" >&2
+  exit 2
+fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT="${BLUEBOAT_OUTPUT_DIR:-$ROOT/blueboat-gazebo-output/$MODE}"
 mkdir -p "$OUT"
@@ -39,7 +44,7 @@ python3 "$ROOT/tools/gazebo/tune_wave_scenario.py" \
   --model "$ASV_WAVE_SIM_ROOT/gz-waves-models/world_models/waves/model.sdf" \
   --wind-speed 1.0 --steepness 0.4 \
   | tee "$OUT/wave_scenario.log"
-echo "Gazebo BlueBoat marine physics mode=$MODE; loopback only"
+echo "Gazebo BlueBoat marine physics mode=$MODE navigation=$NAVIGATION_MODE; loopback only"
 cleanup() {
   local result=$?
   trap - EXIT
@@ -166,7 +171,13 @@ PY
 "$PRIMER" --sitl-fixture --port 5762 --seconds 8 \
   | tee "$OUT/initial_external_nav.log"
 grep -q 'packets=80 ' "$OUT/initial_external_nav.log"
-if [[ "$MODE" == "hold" ]]; then
+if [[ "$NAVIGATION_MODE" == "onboard" ]]; then
+  if [[ "$MODE" == "hold" ]]; then
+    BRIDGE_MODE="onboard-blackout"
+  else
+    BRIDGE_MODE="onboard-route"
+  fi
+elif [[ "$MODE" == "hold" ]]; then
   BRIDGE_MODE="sensor-blackout"
 else
   BRIDGE_MODE="sensor-eskf"

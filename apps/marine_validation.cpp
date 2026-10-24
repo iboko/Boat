@@ -22,22 +22,45 @@ void require(bool b,const char* msg){if(!b)throw std::runtime_error(msg);}
 }
 
 int main(int argc,char** argv){
-    if(argc!=4 || std::string(argv[1])!="--sitl-only-marine-surrogate" ||
-       (std::string(argv[2])!="route" && std::string(argv[2])!="blackout")) {
-        std::cerr<<"Usage: --sitl-only-marine-surrogate route|blackout output.csv\n";
+    const std::string mode=argc>=3?argv[2]:"";
+    const bool onboard=mode=="onboard-route"||mode=="onboard-blackout";
+    const bool blackout=mode=="blackout"||mode=="onboard-blackout";
+    const bool route=mode=="route"||mode=="onboard-route";
+    if((argc!=4&&argc!=6) ||
+       std::string(argv[1])!="--sitl-only-marine-surrogate" ||
+       (!blackout && !route) ||
+       (argc==6 && std::string(argv[4])!="--environment")) {
+        std::cerr<<"Usage: --sitl-only-marine-surrogate "
+                    "route|blackout|onboard-route|onboard-blackout output.csv "
+                    "[--environment calm|nominal|crosswind]\n";
         return 2;
     }
-    const bool blackout=std::string(argv[2])=="blackout";
+    const std::string profile=argc==6?argv[5]:"nominal";
+    if(profile!="calm" && profile!="nominal" && profile!="crosswind") {
+        std::cerr<<"Invalid marine environment profile\n";
+        return 2;
+    }
     try {
         boat::marine::MarineParameters parameters{};
-        boat::marine::MarineEnvironment environment{
-            {0.35,-0.20,0},{2.0,3.0,0}};
+        boat::marine::MarineEnvironment environment{};
+        if(profile=="nominal")
+            environment={{0.35,-0.20,0},{2.0,3.0,0}};
+        else if(profile=="crosswind")
+            environment={{0.50,-0.35,0},{-5.0,6.0,0}};
         boat::marine::MarineThreeDof vessel(parameters,environment);
         boat::fixture::Scenario scenario{};
+        if(onboard)
+            scenario.reference_mode=boat::fixture::ReferenceMode::OnboardDeadReckoning;
         if(blackout){
-            scenario.radar_dropout_from_s=6.0;
-            scenario.radar_dropout_until_s=500.0;
-            scenario.max_non_gnss_fix_age_s=3.0;
+            if(onboard){
+                scenario.gnss_dropout_from_s=6.0;
+                scenario.gnss_dropout_until_s=500.0;
+                scenario.max_dead_reckoning_s=3.0;
+            }else{
+                scenario.radar_dropout_from_s=6.0;
+                scenario.radar_dropout_until_s=500.0;
+                scenario.max_non_gnss_fix_age_s=3.0;
+            }
         }
         boat::fixture::SensorFusion navigator(scenario);
         const std::array<boat::ins::Vec3,3> targets{{
@@ -136,23 +159,45 @@ int main(int argc,char** argv){
         std::sort(errors.begin(),errors.end());
         const double p95=errors[static_cast<std::size_t>((errors.size()-1)*0.95)];
         require(p95<3.0,"synthetic marine ESKF error exceeded 3m P95");
-        require(drift>2.0,"neutral thrust falsely treated as station keeping");
+        require(std::isfinite(drift) && drift>=0.0,
+                "invalid motion after neutral thrust");
+        if(profile!="calm")
+            require(drift>2.0,"neutral thrust falsely treated as station keeping");
         if(blackout){
-            require(integrity_stop,"shore blackout did not trigger integrity policy");
+            require(integrity_stop,"loss of position did not trigger integrity policy");
             require(reached<3,"blackout test completed route before loss");
         } else {
             require(!integrity_stop,"normal route lost navigation integrity");
             require(reached==3,"three marine surrogate waypoints were not reached");
             for(double n:nearest)require(n<2.5,"true hull missed a waypoint");
         }
+        if(onboard){
+            require(navigator.generator().shoreCount()==0,
+                    "onboard marine route used shoreline radar");
+            require(navigator.generator().gnssCount()>0,
+                    "onboard marine route lacked initial GNSS reference");
+            require(navigator.generator().missedGnssCount()>0,
+                    "onboard marine route did not exercise GNSS dropout");
+            if(!blackout)
+                require(navigator.state().last_gnss_fix_s>13.0,
+                        "onboard marine route did not restore GNSS corrections");
+        }else{
+            require(navigator.generator().gnssCount()==0,
+                    "shore marine experiment unexpectedly used GNSS fixes");
+        }
         std::cout<<std::setprecision(3)<<std::fixed
                  <<"PASS_MARINE_"<<(blackout?"BLACKOUT":"ROUTE")
+                 <<" navigation="<<(onboard?"onboard":"shore")
+                 <<" environment="<<profile
                  <<" waypoints="<<reached
                  <<" drift_after_neutral_20s_m="<<drift
                  <<" eskf_p95_m="<<p95
                  <<" max_eskf_error_m="<<max_estimation_error
                  <<" stopped_for_integrity="<<int(integrity_stop)
-                 <<" current_n=0.35 current_e=-0.20 wind_n=2 wind_e=3"
+                 <<" current_n="<<environment.water_current_ned_mps.x
+                 <<" current_e="<<environment.water_current_ned_mps.y
+                 <<" wind_n="<<environment.wind_ned_mps.x
+                 <<" wind_e="<<environment.wind_ned_mps.y
                  <<" model=unvalidated_3dof_surrogate NOT_GAZEBO=true\n";
         return 0;
     }catch(const std::exception& e){

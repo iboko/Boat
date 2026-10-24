@@ -25,6 +25,9 @@ jobs:
           ./build/boat_marine_validation --sitl-only-marine-surrogate route marine-output/marine_route.csv | tee marine-output/marine_route.log
           ./build/boat_marine_validation --sitl-only-marine-surrogate blackout marine-output/marine_blackout.csv | tee marine-output/marine_blackout.log
           python3 tools/marine/validate_marine_csv.py marine-output
+          python3 tools/marine/test_onboard_environment_matrix.py
+          python3 tools/marine/run_onboard_environment_matrix.py --sitl-only \
+            --executable ./build/boat_marine_validation --output-dir marine-output
       - name: Upload standalone marine model evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -12,7 +12,8 @@ int main() {
     ErrorStateIns estimator;
     estimator.initialize(0,{0,0,0},{1.5,0,0},{1,0,0,0},true);
     // Synthetic absolute fix initializes integrity. Not a real sensor input.
-    estimator.correctPosition({0,{0,0,0},0.8,1.5,AbsoluteSource::Gnss,true,false});
+    estimator.correctPosition({0,{0,0,0},0.8,1.5,AbsoluteSource::Gnss,true,false,
+                               {10,3,1.1,true,false}});
     std::cout << "time_s,true_n_m,estimated_n_m,estimated_e_m,"
                  "error_m,sigma_horizontal_m,gnss_denied,independent_fix,integrity_ok\n";
     double max_error=0;
@@ -27,7 +28,8 @@ int main() {
         if(k%100==0) {
             if(!denied) {
                 estimator.correctPosition({t,{1.5*t+0.1*std::sin(t),0.15*std::cos(t),0},
-                                          0.9,1.5,AbsoluteSource::Gnss,true,false});
+                                          0.9,1.5,AbsoluteSource::Gnss,true,false,
+                                          {10,3,1.1,true,false}});
             } else {
                 // This simulates the OUTPUT of radar/map matching, NOT radar processing.
                 if(estimator.correctPosition({t,{1.5*t+0.25*std::sin(t),0.25*std::cos(t),0},

@@ -19,6 +19,8 @@ struct MarineParameters {
     double wave_frequency_radps{0.95};
     double maximum_thrust_n{120.0};
     double maximum_yaw_moment_nm{50.0};
+    double propulsor_half_spacing_m{0.28}; // transverse offset of each propeller
+    double maximum_propulsor_thrust_n{60.0}; // one propeller, either direction
 };
 struct MarineEnvironment {
     ins::Vec3 water_current_ned_mps{};
@@ -27,6 +29,10 @@ struct MarineEnvironment {
 struct MarineControl {
     double forward_thrust_n{};
     double yaw_moment_nm{};
+};
+struct TwinPropulsorControl {
+    double port_thrust_n{};
+    double starboard_thrust_n{};
 };
 struct MarineState {
     double time_s{};
@@ -43,6 +49,10 @@ public:
                             MarineEnvironment environment = {});
     void reset();
     bool step(double dt_s, MarineControl command);
+    // Convert separate forward propeller forces into planar surge/yaw loads.
+    // Positive port minus starboard thrust produces clockwise yaw in NED.
+    // This remains a force-level surrogate, not RPM-to-thrust calibration.
+    bool stepTwinPropulsors(double dt_s, TwinPropulsorControl command);
     const MarineState& state() const { return state_; }
     const MarineParameters& parameters() const { return parameters_; }
     const MarineEnvironment& environment() const { return environment_; }

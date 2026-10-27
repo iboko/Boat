@@ -29,11 +29,26 @@ MarineThreeDof::MarineThreeDof(MarineParameters p,MarineEnvironment e)
        !valid(p.wave_frequency_radps)||p.wave_frequency_radps<0 ||
        !valid(p.maximum_thrust_n)||p.maximum_thrust_n<=0 ||
        !valid(p.maximum_yaw_moment_nm)||p.maximum_yaw_moment_nm<=0 ||
+       !valid(p.propulsor_half_spacing_m)||p.propulsor_half_spacing_m<=0 ||
+       !valid(p.maximum_propulsor_thrust_n)||p.maximum_propulsor_thrust_n<=0 ||
+       2.0*p.maximum_propulsor_thrust_n>p.maximum_thrust_n ||
+       2.0*p.propulsor_half_spacing_m*p.maximum_propulsor_thrust_n>
+           p.maximum_yaw_moment_nm ||
        !horizontal(e.water_current_ned_mps)||!horizontal(e.wind_ned_mps))
         throw std::invalid_argument("nonphysical marine model parameter");
     reset();
 }
 void MarineThreeDof::reset(){state_={};}
+
+bool MarineThreeDof::stepTwinPropulsors(double dt, TwinPropulsorControl cmd) {
+    if(!valid(cmd.port_thrust_n) || !valid(cmd.starboard_thrust_n) ||
+       std::abs(cmd.port_thrust_n)>parameters_.maximum_propulsor_thrust_n ||
+       std::abs(cmd.starboard_thrust_n)>parameters_.maximum_propulsor_thrust_n)
+        return false;
+    return step(dt,{cmd.port_thrust_n+cmd.starboard_thrust_n,
+                    parameters_.propulsor_half_spacing_m*
+                       (cmd.port_thrust_n-cmd.starboard_thrust_n)});
+}
 
 bool MarineThreeDof::step(double dt,MarineControl cmd) {
     if(!valid(dt)||dt<=0.0||dt>0.05 ||

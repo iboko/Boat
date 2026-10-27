@@ -40,6 +40,15 @@ struct ImuSample {
 
 // Absolute position is stated in the same fixed, surveyed local NED datum.
 enum class AbsoluteSource { Gnss, ShoreRadar, ShoreLidar, SurveyedBeacon };
+// Receiver-reported quality only. These flags do not independently detect
+// slowly drifting spoofed coordinates or establish geodetic authenticity.
+struct GnssQuality {
+    unsigned satellites_used{};
+    unsigned fix_dimension{}; // 2 or 3; require 3-D for this NED estimator
+    double hdop{std::numeric_limits<double>::infinity()};
+    bool receiver_integrity_ok{false};
+    bool interference_reported{false};
+};
 struct AbsoluteFix {
     double time_s{};
     Vec3 position_ned_m{};
@@ -48,6 +57,7 @@ struct AbsoluteFix {
     AbsoluteSource source{AbsoluteSource::Gnss};
     bool valid{false};
     bool independently_georeferenced{false}; // false if derived from GNSS in another module
+    GnssQuality gnss{}; // mandatory quality evidence when source == Gnss
 };
 
 struct AbsoluteAttitude {
@@ -90,6 +100,8 @@ struct State {
 
 struct Configuration {
     double max_imu_dt_s{0.05};
+    double max_imu_specific_force_mps2{150.0};
+    double max_imu_angular_rate_radps{12.0};
     double max_measurement_age_s{0.03}; // out-of-sequence measurements not implemented
     double gravity_ned_mps2{9.80665};
     double accel_white_noise_mps2_per_sqrt_hz{0.08};
@@ -99,11 +111,27 @@ struct Configuration {
     double max_position_nis{16.27}; // 3 DoF 99.9% approximate threshold
     double max_velocity_nis{16.27};
     double max_attitude_nis{16.27};
+    double max_heading_nis{10.83}; // chi-square, one DoF, about 99.9%
+    unsigned min_gnss_satellites{6};
+    double max_gnss_hdop{4.0};
     double initial_position_sigma_m{4.0};
     double initial_velocity_sigma_mps{1.0};
     double initial_attitude_sigma_rad{0.08};
     double initial_accel_bias_sigma_mps2{0.2};
     double initial_gyro_bias_sigma_radps{0.02};
+};
+
+// Magnetic heading of the hull's forward axis, clockwise from magnetic North.
+// Declination is magnetic-to-true (true heading = magnetic + declination).
+// This is not course over ground and provides no roll/pitch measurement.
+struct MagneticHeading {
+    double time_s{};
+    double magnetic_heading_rad{};
+    double declination_rad{};
+    double angular_sigma_rad{0.07};
+    bool calibrated{false};
+    bool magnetic_disturbance{false};
+    bool valid{false};
 };
 
 class ErrorStateIns {
@@ -117,6 +145,7 @@ public:
     bool correctPosition(const AbsoluteFix& fix);
     bool correctGroundVelocity(const GroundVelocity& observation);
     bool correctAttitude(const AbsoluteAttitude& observation);
+    bool correctMagneticHeading(const MagneticHeading& observation);
     const State& state() const { return state_; }
     static double horizontalSigmaM(const State& state);
     static double maximumCovarianceAsymmetry(const State& state);
@@ -126,6 +155,11 @@ private:
     State state_{};
     bool measurementUpdate(Vec3 residual, const std::array<double, 3>& variances,
                            int state_offset, double nis_gate);
+    bool measurementUpdateScalar(double residual, double variance,
+                                 const std::array<double, 15>& observation_jacobian,
+                                 double nis_gate);
+    void applyErrorUpdate(const std::array<double, 15>& correction,
+                          const Covariance15& updated_covariance);
 };
 
 struct IntegrityPolicy {

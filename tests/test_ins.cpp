@@ -41,6 +41,11 @@ int main() {
                 "require calibrated IMU");
         require(!ins.propagate({0.1,{0,0,-9.80665},{0,0,0},true}),
                 "reject missing IMU epochs");
+        require(!ins.propagate({0.01,{151,0,0},{0,0,0},true}),
+                "reject saturated accelerometer measurement");
+        require(!ins.propagate({0.01,{0,0,-9.80665},{13,0,0},true}),
+                "reject excessive angular rate");
+        near(ins.state().time_s,0.0,0.0,"rejected IMU must not advance time");
 
         for(int i=1;i<=1000;++i) {
             const double t=i*0.01;
@@ -60,7 +65,8 @@ int main() {
                                       AbsoluteSource::ShoreRadar,true,false}),
                 "reject shore pose secretly derived from GNSS");
         require(!ins.correctPosition({10,{1000,0,0},0.1,0.1,
-                                      AbsoluteSource::Gnss,true,false}),
+                                      AbsoluteSource::Gnss,true,false,
+                                      {10,3,1.1,true,false}}),
                 "reject position innovation outlier");
         require(ins.correctPosition({10,{0.2,-0.2,0},1.0,2.0,
                                      AbsoluteSource::ShoreRadar,true,true}),
@@ -100,12 +106,29 @@ int main() {
         // blocks navigation in GNSS-denied policy.
         ErrorStateIns gnssOnly;
         gnssOnly.initialize(0,{0,0,0},{0,0,0},{1,0,0,0},true);
+        require(!gnssOnly.correctPosition({0,{0.1,0.1,0},0.8,1.5,
+                                           AbsoluteSource::Gnss,true,false}),
+                "missing GNSS receiver quality accepted");
+        require(!gnssOnly.correctPosition({0,{0.1,0.1,0},0.8,1.5,
+                                           AbsoluteSource::Gnss,true,false,
+                                           {4,2,6.0,false,true}}),
+                "invalid or interfered GNSS quality accepted");
+        require(!std::isfinite(gnssOnly.state().last_gnss_fix_s),
+                "rejected GNSS quality refreshed fix timestamp");
         require(gnssOnly.correctPosition({0,{0.1,0.1,0},0.8,1.5,
-                                          AbsoluteSource::Gnss,true,false}),
+                                          AbsoluteSource::Gnss,true,false,
+                                          {10,3,1.1,true,false}}),
                 "valid GNSS correction");
         require(assess(gnssOnly.state(),0,false).valid,"GNSS allowed mode");
         require(!assess(gnssOnly.state(),0,true).valid,
                 "GNSS alone cannot satisfy no-GNSS requirement");
+
+        Configuration invalid_cfg{};
+        invalid_cfg.max_attitude_nis=0.0;
+        bool invalid_config_rejected=false;
+        try { (void)ErrorStateIns{invalid_cfg}; }
+        catch(const std::invalid_argument&) {invalid_config_rejected=true;}
+        require(invalid_config_rejected,"invalid attitude gate accepted");
 
         ErrorStateIns notSurveyed;
         notSurveyed.initialize(0,{0,0,0},{0,0,0},{1,0,0,0},false);

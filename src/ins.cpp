@@ -14,6 +14,14 @@ bool finite(double x) { return std::isfinite(x); }
 bool finite(Vec3 v) { return finite(v.x) && finite(v.y) && finite(v.z); }
 bool finite(Quaternion q) { return finite(q.w) && finite(q.x) && finite(q.y) && finite(q.z); }
 double squared(double x) { return x * x; }
+double wrapAngle(double radians) { return std::atan2(std::sin(radians),std::cos(radians)); }
+bool headingFromQuaternion(Quaternion q, double& heading) {
+    const Vec3 forward = rotate(q,{1.0,0.0,0.0});
+    const double horizontal = std::hypot(forward.x,forward.y);
+    if(!finite(forward) || horizontal<0.2) return false;
+    heading=std::atan2(forward.y,forward.x);
+    return finite(heading);
+}
 void diagonal(Covariance15& m, int offset, double sigma) {
     for (int i = 0; i < 3; ++i) cell(m, offset + i, offset + i) = squared(sigma);
 }
@@ -78,6 +86,8 @@ Vec3 rotateInverse(Quaternion q, Vec3 v) { return rotate({q.w,-q.x,-q.y,-q.z},v)
 
 ErrorStateIns::ErrorStateIns(Configuration c) : cfg_(c) {
     if (!finite(c.max_imu_dt_s) || c.max_imu_dt_s <= 0.0 ||
+        !finite(c.max_imu_specific_force_mps2) || c.max_imu_specific_force_mps2<=0.0 ||
+        !finite(c.max_imu_angular_rate_radps) || c.max_imu_angular_rate_radps<=0.0 ||
         !finite(c.max_measurement_age_s) || c.max_measurement_age_s < 0.0 ||
         !finite(c.gravity_ned_mps2) || c.gravity_ned_mps2 <= 0.0 ||
         !finite(c.accel_white_noise_mps2_per_sqrt_hz) || c.accel_white_noise_mps2_per_sqrt_hz <= 0.0 ||
@@ -86,6 +96,10 @@ ErrorStateIns::ErrorStateIns(Configuration c) : cfg_(c) {
         !finite(c.gyro_bias_walk_radps2_per_sqrt_hz) || c.gyro_bias_walk_radps2_per_sqrt_hz <= 0.0 ||
         !finite(c.max_position_nis) || c.max_position_nis <= 0.0 ||
         !finite(c.max_velocity_nis) || c.max_velocity_nis <= 0.0 ||
+        !finite(c.max_attitude_nis) || c.max_attitude_nis <= 0.0 ||
+        !finite(c.max_heading_nis) || c.max_heading_nis <= 0.0 ||
+        c.min_gnss_satellites<4 || !finite(c.max_gnss_hdop) ||
+        c.max_gnss_hdop<=0.0 ||
         !finite(c.initial_position_sigma_m) || c.initial_position_sigma_m <= 0.0 ||
         !finite(c.initial_velocity_sigma_mps) || c.initial_velocity_sigma_mps <= 0.0 ||
         !finite(c.initial_attitude_sigma_rad) || c.initial_attitude_sigma_rad <= 0.0 ||
@@ -112,7 +126,9 @@ void ErrorStateIns::initialize(double t, Vec3 p, Vec3 v, Quaternion q, bool alig
 bool ErrorStateIns::propagate(const ImuSample& m) {
     if (!state_.initialized || !state_.origin_fixed_and_aligned ||
         !m.calibrated || !finite(m.time_s) ||
-        !finite(m.specific_force_frd_mps2) || !finite(m.angular_rate_frd_radps)) return false;
+        !finite(m.specific_force_frd_mps2) || !finite(m.angular_rate_frd_radps) ||
+        norm(m.specific_force_frd_mps2)>cfg_.max_imu_specific_force_mps2 ||
+        norm(m.angular_rate_frd_radps)>cfg_.max_imu_angular_rate_radps) return false;
     const double dt = m.time_s - state_.time_s;
     if (!(dt > 0.0 && dt <= cfg_.max_imu_dt_s)) return false;
     const Vec3 w = m.angular_rate_frd_radps - state_.gyro_bias_frd_radps;
@@ -188,7 +204,7 @@ bool ErrorStateIns::measurementUpdate(Vec3 r, const std::array<double,3>& varian
     for(int i=0;i<N;++i)
         for(int a=0;a<3;++a)
             for(int b=0;b<3;++b)K[i][a]+=cell(state_.covariance,i,offset+b)*inv[b][a];
-    double delta[N]{};
+    std::array<double,15> delta{};
     for(int i=0;i<N;++i)
         for(int a=0;a<3;++a)delta[i]+=K[i][a]*z[a];
 
@@ -204,6 +220,45 @@ bool ErrorStateIns::measurementUpdate(Vec3 r, const std::array<double,3>& varian
             }
             cell(updated,i,j)=v;
         }
+    applyErrorUpdate(delta,updated);
+    return true;
+}
+
+bool ErrorStateIns::measurementUpdateScalar(
+        double residual, double variance,
+        const std::array<double,15>& h, double gate) {
+    if(!finite(residual) || !finite(variance) || variance<=0.0) return false;
+    std::array<double,15> ph{};
+    for(int i=0;i<N;++i)
+        for(int j=0;j<N;++j) ph[i]+=cell(state_.covariance,i,j)*h[j];
+    double innovation_variance=variance;
+    for(int i=0;i<N;++i) innovation_variance+=h[i]*ph[i];
+    if(!finite(innovation_variance) || innovation_variance<=kTiny ||
+       squared(residual)/innovation_variance>gate) return false;
+    std::array<double,15> gain{},delta{};
+    Covariance15 joseph{},temp{},updated{};
+    for(int i=0;i<N;++i) {
+        gain[i]=ph[i]/innovation_variance;
+        delta[i]=gain[i]*residual;
+        for(int j=0;j<N;++j)
+            cell(joseph,i,j)=double(i==j)-gain[i]*h[j];
+    }
+    for(int i=0;i<N;++i)
+        for(int k=0;k<N;++k)
+            for(int j=0;j<N;++j)
+                cell(temp,i,j)+=cell(joseph,i,k)*cell(state_.covariance,k,j);
+    for(int i=0;i<N;++i)
+        for(int j=0;j<N;++j) {
+            for(int k=0;k<N;++k)
+                cell(updated,i,j)+=cell(temp,i,k)*cell(joseph,j,k);
+            cell(updated,i,j)+=variance*gain[i]*gain[j];
+        }
+    applyErrorUpdate(delta,updated);
+    return true;
+}
+
+void ErrorStateIns::applyErrorUpdate(const std::array<double,15>& delta,
+                                     const Covariance15& updated) {
     state_.position_ned_m=state_.position_ned_m+Vec3{delta[0],delta[1],delta[2]};
     state_.velocity_ned_mps=state_.velocity_ned_mps+Vec3{delta[3],delta[4],delta[5]};
     const Vec3 da{delta[6],delta[7],delta[8]};
@@ -235,7 +290,6 @@ bool ErrorStateIns::measurementUpdate(Vec3 r, const std::array<double,3>& varian
             cell(result,i,j)=mean; cell(result,j,i)=mean;
         }
     state_.covariance=result;
-    return true;
 }
 
 bool ErrorStateIns::correctPosition(const AbsoluteFix& f) {
@@ -244,7 +298,12 @@ bool ErrorStateIns::correctPosition(const AbsoluteFix& f) {
         !finite(f.horizontal_sigma_m) || !finite(f.vertical_sigma_m) ||
         f.horizontal_sigma_m<=0.0 || f.vertical_sigma_m<=0.0 ||
         std::abs(state_.time_s-f.time_s)>cfg_.max_measurement_age_s ||
-        (f.source!=AbsoluteSource::Gnss && !f.independently_georeferenced)) {
+        (f.source!=AbsoluteSource::Gnss && !f.independently_georeferenced) ||
+        (f.source==AbsoluteSource::Gnss &&
+            (f.gnss.satellites_used<cfg_.min_gnss_satellites ||
+             f.gnss.fix_dimension!=3 || !finite(f.gnss.hdop) ||
+             f.gnss.hdop>cfg_.max_gnss_hdop ||
+             !f.gnss.receiver_integrity_ok || f.gnss.interference_reported))) {
         ++state_.rejected_fixes; return false;
     }
     const std::array<double,3> variance{squared(f.horizontal_sigma_m),
@@ -297,6 +356,35 @@ bool ErrorStateIns::correctAttitude(const AbsoluteAttitude& a) {
     const double variance=squared(a.angular_sigma_rad);
     return measurementUpdate(residual,{variance,variance,variance},
                              6,cfg_.max_attitude_nis);
+}
+
+bool ErrorStateIns::correctMagneticHeading(const MagneticHeading& m) {
+    if(!state_.initialized || !state_.origin_fixed_and_aligned ||
+       !m.valid || !m.calibrated || m.magnetic_disturbance ||
+       !finite(m.time_s) || !finite(m.magnetic_heading_rad) ||
+       !finite(m.declination_rad) || !finite(m.angular_sigma_rad) ||
+       std::abs(m.magnetic_heading_rad)>3.14159265358979323846 ||
+       std::abs(m.declination_rad)>3.14159265358979323846 ||
+       m.angular_sigma_rad<=0.0 || m.angular_sigma_rad>1.0 ||
+       std::abs(m.time_s-state_.time_s)>cfg_.max_measurement_age_s)
+        return false;
+    double predicted=0.0;
+    if(!headingFromQuaternion(state_.body_to_ned,predicted)) return false;
+    constexpr double epsilon=1e-6;
+    std::array<double,15> h{};
+    for(int axis=0;axis<3;++axis) {
+        Vec3 small{};
+        if(axis==0) small.x=epsilon;
+        if(axis==1) small.y=epsilon;
+        if(axis==2) small.z=epsilon;
+        const auto perturbed=normalize(multiply(state_.body_to_ned,expRotation(small)));
+        double heading=0.0;
+        if(!headingFromQuaternion(perturbed,heading)) return false;
+        h[6+axis]=wrapAngle(heading-predicted)/epsilon;
+    }
+    const double reference=wrapAngle(m.magnetic_heading_rad+m.declination_rad);
+    return measurementUpdateScalar(wrapAngle(reference-predicted),
+                                   squared(m.angular_sigma_rad),h,cfg_.max_heading_nis);
 }
 
 double ErrorStateIns::horizontalSigmaM(const State& s) {

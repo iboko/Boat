@@ -27,6 +27,8 @@ SyntheticSensors::SyntheticSensors(Scenario s):scenario_(s) {
          valid(s.gnss_period_s) && s.gnss_period_s>0.0 &&
          valid(s.gnss_dropout_from_s) && valid(s.gnss_dropout_until_s) &&
          s.gnss_dropout_from_s<=s.gnss_dropout_until_s &&
+         valid(s.gnss_unreliable_from_s) && valid(s.gnss_unreliable_until_s) &&
+         s.gnss_unreliable_from_s<=s.gnss_unreliable_until_s &&
          valid(s.max_dead_reckoning_s) && s.max_dead_reckoning_s>=1.0 &&
          s.max_dead_reckoning_s<=60.0 &&
          valid(s.max_dead_reckoning_horizontal_sigma_m) &&
@@ -36,6 +38,8 @@ SyntheticSensors::SyntheticSensors(Scenario s):scenario_(s) {
          s.bottom_dropout_from_s<=s.bottom_dropout_until_s &&
          valid(s.accel_bias_mps2)&&valid(s.gyro_bias_radps)&&
          valid(s.modeled_current_n_mps)&&valid(s.modeled_current_e_mps)&&
+         valid(s.magnetic_declination_rad) &&
+         std::abs(s.magnetic_declination_rad)<=3.14159265358979323846 &&
          valid(s.max_non_gnss_fix_age_s)&&s.max_non_gnss_fix_age_s>=1.0&&
          s.max_non_gnss_fix_age_s<=30.0)) {
         throw std::invalid_argument("invalid synthetic sensor scenario");
@@ -119,6 +123,18 @@ SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
                                      ins::expRotation(tilt_noise))),
         0.025,true,true};
     result.attitude_fix_available=true;
+    // Heading is derived from a distinct test observation with explicit
+    // magnetic declination. Never fuse it alongside the correlated full
+    // synthetic quaternion in the same update cycle.
+    const auto forward=ins::rotate(ins::normalize(t.body_to_ned),{1,0,0});
+    if(std::hypot(forward.x,forward.y)>=0.2) {
+        const auto wrap=[](double a){return std::atan2(std::sin(a),std::cos(a));};
+        result.magnetic_heading={t.time_s,
+            wrap(std::atan2(forward.y,forward.x)-
+                 scenario_.magnetic_declination_rad+0.006*std::sin(0.41*t.time_s)),
+            scenario_.magnetic_declination_rad,0.04,true,false,true};
+        result.magnetic_heading_available=true;
+    }
     if(scenario_.reference_mode==ReferenceMode::OnboardDeadReckoning &&
        t.time_s-last_gnss_time_s>=scenario_.gnss_period_s-0.00001) {
         last_gnss_time_s=t.time_s;
@@ -128,9 +144,12 @@ SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
         } else {
             // GNSS is independently noised test input, NOT direct position
             // assignment into the ESKF or into MAVLink. No shore references.
+            const bool degraded=dropout(t.time_s,
+                scenario_.gnss_unreliable_from_s,scenario_.gnss_unreliable_until_s);
             result.gnss_fix={t.time_s,
                 t.position_ned_m+periodicNoise(t.time_s,0.22),
-                0.75,1.0,ins::AbsoluteSource::Gnss,true,true};
+                0.75,1.0,ins::AbsoluteSource::Gnss,true,true,
+                {10,3,1.1,!degraded,degraded}};
             result.gnss_fix_available=true;
             ++gnss_count_;
         }
@@ -185,7 +204,8 @@ SensorSet SyntheticSensors::observe(const PhysicsFrame& t) {
 }
 
 SensorFusion::SensorFusion(Scenario s):sensors_(s),
-    mode_(s.reference_mode),max_fix_age_s_(s.max_non_gnss_fix_age_s),
+    mode_(s.reference_mode),heading_only_aiding_(s.heading_only_aiding),
+    max_fix_age_s_(s.max_non_gnss_fix_age_s),
     dead_reckoning_limit_s_(s.max_dead_reckoning_s),
     dead_reckoning_sigma_limit_m_(s.max_dead_reckoning_horizontal_sigma_m) {}
 
@@ -252,7 +272,14 @@ bool SensorFusion::step(const PhysicsFrame& truth) {
         if(!estimator_.propagate(sample)) {++rejected_steps_;return false;}
         ++propagated_;
     }
-    if(latest_.attitude_fix_available) {
+    if(heading_only_aiding_) {
+        if(latest_.magnetic_heading_available) {
+            if(estimator_.correctMagneticHeading(latest_.magnetic_heading))
+                ++accepted_headings_;
+            else
+                ++rejected_headings_;
+        }
+    } else if(latest_.attitude_fix_available) {
         if(estimator_.correctAttitude(latest_.attitude))
             ++accepted_attitudes_;
         else

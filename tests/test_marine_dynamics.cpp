@@ -47,6 +47,36 @@ int main() {
         check(turning.state().heading_rad>0.25,
               "yaw moment failed to rotate hull");
 
+        MarineThreeDof twin_straight{no_wave,{}};
+        MarineThreeDof twin_starboard_turn{no_wave,{}};
+        MarineThreeDof twin_port_turn{no_wave,{}};
+        for(int i=0;i<200;++i) {
+            check(twin_straight.stepTwinPropulsors(0.02,{40,40}),
+                  "balanced twin propulsors");
+            check(twin_starboard_turn.stepTwinPropulsors(0.02,{40,5}),
+                  "port-heavy propulsor turn");
+            check(twin_port_turn.stepTwinPropulsors(0.02,{5,40}),
+                  "starboard-heavy propulsor turn");
+        }
+        check(std::abs(twin_straight.state().heading_rad)<1e-10,
+              "matched propellers generated spurious yaw");
+        check(twin_starboard_turn.state().heading_rad>0.10 &&
+              twin_port_turn.state().heading_rad<-0.10,
+              "twin propulsors have incorrect NED yaw signs");
+        const auto before=twin_straight.state().time_s;
+        check(!twin_straight.stepTwinPropulsors(0.02,{61,0}),
+              "individual propulsor saturation was accepted");
+        check(!twin_straight.stepTwinPropulsors(0.02,{40,NAN}),
+              "nonfinite propulsor command was accepted");
+        check(twin_straight.state().time_s==before,
+              "invalid propulsor command mutated physical state");
+        MarineParameters impossible=no_wave;
+        impossible.maximum_propulsor_thrust_n=70;
+        bool rejected=false;
+        try { (void)MarineThreeDof{impossible,{}}; }
+        catch(const std::invalid_argument&) {rejected=true;}
+        check(rejected,"inconsistent propulsor/total thrust limits accepted");
+
         MarineParameters wave{};
         MarineThreeDof blowing{wave,{{0.4,-0.25,0},{2.5,4.0,0}}};
         for(int i=0;i<1500;++i)
@@ -56,8 +86,8 @@ int main() {
         check(std::abs(blowing.state().position_ned_m.y-
                  river.state().position_ned_m.y)>0.1,
               "wind/wave lateral perturbation ineffective");
-        std::cout<<"PASS: 3DOF surge/sway/yaw, current-induced neutral drift, "
-                    "wind/waves, thrust and torque safety bounds\n";
+        std::cout<<"PASS: 3DOF surge/sway/yaw, current drift, wind/waves, "
+                    "bounded port/starboard thrust and yaw signs\n";
         return 0;
     } catch(const std::exception& e) {
         std::cerr<<"FAIL: "<<e.what()<<"\n";

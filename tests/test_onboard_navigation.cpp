@@ -107,6 +107,39 @@ int main() {
         require(long_outage.generator().shoreCount()==0,
                 "long outage depended on surveyed reflectors");
 
+        // The receiver may continue outputting plausible coordinates while
+        // reporting interference. Such fixes must not renew navigation age.
+        Scenario unreliable=scenario;
+        unreliable.gnss_dropout_from_s=600.0;
+        unreliable.gnss_dropout_until_s=600.0;
+        unreliable.gnss_unreliable_from_s=9.0;
+        unreliable.gnss_unreliable_until_s=200.0;
+        SensorFusion untrusted_gnss(unreliable);
+        for(int i=0;i<=230;++i)
+            require(untrusted_gnss.step(frame(i*0.1)),
+                    "receiver integrity fault stopped INS propagation");
+        require(untrusted_gnss.generator().gnssCount()>15,
+                "receiver integrity fault did not emit GNSS observations");
+        require(untrusted_gnss.state().last_gnss_fix_s<9.0 &&
+                untrusted_gnss.state().rejected_fixes>0,
+                "unreliable receiver fixes incorrectly refreshed GNSS age");
+        require(!untrusted_gnss.integrity(),
+                "plausible but interfered GNSS fixes bypassed dead-reckoning limit");
+
+        // Explicit magnetic-heading fusion is an alternative to full 3D
+        // reference-attitude fusion, not an extra correlated observation.
+        Scenario compass=scenario;
+        compass.heading_only_aiding=true;
+        SensorFusion heading_only(compass);
+        for(int i=0;i<=250;++i)
+            require(heading_only.step(frame(i*0.1)),
+                    "heading-only magnetic navigation loop failed");
+        require(heading_only.acceptedHeadings()>150 &&
+                heading_only.acceptedAttitudes()==0,
+                "correlated compass and full attitude channels fused together");
+        require(heading_only.integrity(),
+                "heading-only fixture unexpectedly lost bounded navigation integrity");
+
         Scenario no_initial_fix=scenario;
         no_initial_fix.gnss_dropout_from_s=0.0;
         no_initial_fix.gnss_dropout_until_s=200.0;

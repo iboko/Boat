@@ -21,6 +21,8 @@ struct SensorSet {
     ins::ImuSample imu{};
     ins::AbsoluteAttitude attitude{};
     bool attitude_fix_available{false};
+    ins::MagneticHeading magnetic_heading{};
+    bool magnetic_heading_available{false};
     ins::AbsoluteFix shore_fix{};
     ins::AbsoluteFix gnss_fix{};
     ShoreRanges shore_ranges{};
@@ -41,6 +43,10 @@ struct Scenario {
     double gnss_period_s{1.0};
     double gnss_dropout_from_s{10.0};
     double gnss_dropout_until_s{13.0};
+    // SITL fault injection: receiver emits fixes with adverse integrity flags.
+    // The position can look plausible, but it must never refresh GNSS age.
+    double gnss_unreliable_from_s{600.0};
+    double gnss_unreliable_until_s{600.0};
     double max_dead_reckoning_s{12.0};
     double max_dead_reckoning_horizontal_sigma_m{6.0};
     double radar_period_s{0.7};
@@ -53,6 +59,10 @@ struct Scenario {
     double gyro_bias_radps{0.0007};
     double modeled_current_n_mps{0.35};
     double modeled_current_e_mps{-0.20};
+    double magnetic_declination_rad{0.08};
+    // Alternative test mode: use heading-only corrections after first tilt
+    // alignment, not correlated full-quaternion and heading observations.
+    bool heading_only_aiding{false};
     double max_non_gnss_fix_age_s{6.0};
 };
 
@@ -108,6 +118,8 @@ public:
     unsigned propagated() const { return propagated_; }
     unsigned acceptedAttitudes() const { return accepted_attitudes_; }
     unsigned rejectedAttitudes() const { return rejected_attitudes_; }
+    unsigned acceptedHeadings() const { return accepted_headings_; }
+    unsigned rejectedHeadings() const { return rejected_headings_; }
     unsigned rejectedSteps() const { return rejected_steps_; }
     const SyntheticSensors& generator() const { return sensors_; }
 
@@ -115,6 +127,7 @@ private:
     SyntheticSensors sensors_;
     ins::ErrorStateIns estimator_;
     ReferenceMode mode_{ReferenceMode::ShoreAided};
+    bool heading_only_aiding_{false};
     double max_fix_age_s_{6.0};
     double dead_reckoning_limit_s_{12.0};
     double dead_reckoning_sigma_limit_m_{6.0};
@@ -122,6 +135,7 @@ private:
     bool first_{true};
     unsigned propagated_{0}, rejected_steps_{0};
     unsigned accepted_attitudes_{0}, rejected_attitudes_{0};
+    unsigned accepted_headings_{0}, rejected_headings_{0};
     bool brief_gnss_triggered_{false}, brief_gnss_loss_seen_{false};
     bool brief_gnss_recovered_{false};
     unsigned brief_gnss_missed_before_{0};

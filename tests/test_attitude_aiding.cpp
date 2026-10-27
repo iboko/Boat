@@ -37,8 +37,37 @@ int main() {
         ensure(!filter.correctAttitude({
             filter.state().time_s,Quaternion{},
             0.025,false,true}),"untrusted attitude marked independent");
+        // Independent heading-only measurement with magnetic declination.
+        // It must not silently provide a full 3-D attitude observation.
+        ErrorStateIns compass;
+        compass.initialize(0.0,{0,0,0},{0,0,0},expRotation({0,0,0.3}),true);
+        const auto heading=[&]() {
+            const auto f=rotate(compass.state().body_to_ned,{1,0,0});
+            return std::atan2(f.y,f.x);
+        };
+        ensure(!compass.correctMagneticHeading({0.0,0.1,0.05,0.04,false,false,true}),
+               "uncalibrated magnetic compass accepted");
+        ensure(!compass.correctMagneticHeading({0.0,0.1,0.05,0.04,true,true,true}),
+               "magnetically disturbed reading accepted");
+        ensure(!compass.correctMagneticHeading({0.0,-2.9,0.0,0.01,true,false,true}),
+               "large magnetic innovation accepted");
+        const double before=std::abs(heading()-0.15);
+        ensure(compass.correctMagneticHeading({0.0,0.1,0.05,0.04,true,false,true}),
+               "calibrated heading with declination rejected");
+        ensure(std::abs(heading()-0.15)<before,
+               "magnetic correction failed to reduce true-heading error");
+        ensure(ErrorStateIns::maximumCovarianceAsymmetry(compass.state())<1e-9,
+               "scalar Joseph magnetic update corrupted covariance symmetry");
+        ensure(!compass.correctMagneticHeading({-1.0,0.1,0.05,0.04,true,false,true}),
+               "stale compass observation accepted");
+
+        ErrorStateIns wraparound;
+        wraparound.initialize(0.0,{0,0,0},{0,0,0},
+                              expRotation({0,0,3.12}),true);
+        ensure(wraparound.correctMagneticHeading({0.0,-3.12,0.0,0.07,true,false,true}),
+               "heading wraparound incorrectly rejected near 180 degrees");
         std::cout<<"PASS: ESKF attitude aiding rejects false compass and"
-                    " corrects gyro bias in GNSS-denied gravity mechanization\n";
+                    " corrects gyro bias; magnetic heading uses declination and innovation gating\n";
         return 0;
     } catch(const std::exception& exc) {
         std::cerr<<"FAIL: "<<exc.what()<<"\n";

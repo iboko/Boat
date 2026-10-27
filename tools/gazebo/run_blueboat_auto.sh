@@ -9,8 +9,15 @@ if [[ "$#" -ne 2 || "${1:-}" != "--sitl-only" ||
 fi
 MODE="$2"
 NAVIGATION_MODE="${BLUEBOAT_NAVIGATION_MODE:-shore}"
+BLUEBOAT_ENVIRONMENT="${BLUEBOAT_ENVIRONMENT:-calm}"
 if [[ "$NAVIGATION_MODE" != "shore" && "$NAVIGATION_MODE" != "onboard" ]]; then
   echo "BLUEBOAT_NAVIGATION_MODE must be shore or onboard" >&2
+  exit 2
+fi
+if [[ "$BLUEBOAT_ENVIRONMENT" != "calm" &&
+      "$BLUEBOAT_ENVIRONMENT" != "current" &&
+      "$BLUEBOAT_ENVIRONMENT" != "wind" ]]; then
+  echo "BLUEBOAT_ENVIRONMENT must be calm, current or wind" >&2
   exit 2
 fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -21,10 +28,12 @@ export SITL_MODELS_ROOT="${SITL_MODELS_ROOT:-$HOME/SITL_Models}"
 export ASV_WAVE_SIM_ROOT="${ASV_WAVE_SIM_ROOT:-$HOME/gz_ws/src/asv_wave_sim}"
 export ARDUPILOT_GAZEBO_BUILD="${ARDUPILOT_GAZEBO_BUILD:-$HOME/ardupilot_gazebo/build}"
 export ASV_WAVE_SIM_PLUGIN_DIR="${ASV_WAVE_SIM_PLUGIN_DIR:-$HOME/gz_ws/install/lib}"
+export BOAT_ENV_PLUGIN_DIR="${BOAT_ENV_PLUGIN_DIR:-$ROOT/build-gazebo-env}"
+export BLUEBOAT_ENVIRONMENT
 export BLUEBOAT_PREPARED_WORLD="$OUT/waves_with_blueboat.sdf"
 export GZ_IP="127.0.0.1"
 export GZ_SIM_RESOURCE_PATH="$SITL_MODELS_ROOT/Gazebo/models:$SITL_MODELS_ROOT/Gazebo/worlds:$ASV_WAVE_SIM_ROOT/gz-waves-models/models:$ASV_WAVE_SIM_ROOT/gz-waves-models/world_models:$ASV_WAVE_SIM_ROOT/gz-waves-models/worlds:${GZ_SIM_RESOURCE_PATH:-}"
-export GZ_SIM_SYSTEM_PLUGIN_PATH="$ARDUPILOT_GAZEBO_BUILD:$ASV_WAVE_SIM_PLUGIN_DIR:${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
+export GZ_SIM_SYSTEM_PLUGIN_PATH="$BOAT_ENV_PLUGIN_DIR:$ARDUPILOT_GAZEBO_BUILD:$ASV_WAVE_SIM_PLUGIN_DIR:${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
 # Gazebo finds the plugin .so through GZ_SIM_SYSTEM_PLUGIN_PATH, but
 # its transitive Wave Sim shared libraries require the dynamic loader path.
 export LD_LIBRARY_PATH="$ASV_WAVE_SIM_PLUGIN_DIR:$ARDUPILOT_GAZEBO_BUILD:${LD_LIBRARY_PATH:-}"
@@ -44,7 +53,7 @@ python3 "$ROOT/tools/gazebo/tune_wave_scenario.py" \
   --model "$ASV_WAVE_SIM_ROOT/gz-waves-models/world_models/waves/model.sdf" \
   --wind-speed 1.0 --steepness 0.4 \
   | tee "$OUT/wave_scenario.log"
-echo "Gazebo BlueBoat marine physics mode=$MODE navigation=$NAVIGATION_MODE; loopback only"
+echo "Gazebo BlueBoat marine physics mode=$MODE navigation=$NAVIGATION_MODE environment=$BLUEBOAT_ENVIRONMENT; loopback only"
 cleanup() {
   local result=$?
   trap - EXIT
@@ -120,6 +129,22 @@ for _ in $(seq 1 120); do
   sleep 0.5
 done
 [[ "$READY" -eq 1 ]] || { echo "NO_BLUEBOAT_GAZEBO_ODOMETRY_TOPIC" >&2; exit 4; }
+if [[ "$BLUEBOAT_ENVIRONMENT" != "calm" ]]; then
+  # Refuse simulated environment results if the custom Gazebo force system
+  # failed to load; changing only the SDF metadata is not physical evidence.
+  for _ in $(seq 1 20); do
+    if grep -q 'BOAT_ENV_FORCES_APPLIED' "$OUT/gazebo.log" 2>/dev/null; then
+      break
+    fi
+    sleep 0.25
+  done
+  grep -q 'BOAT_ENV_FORCES_APPLIED' "$OUT/gazebo.log" || {
+    echo "NO_GAZEBO_PHYSICAL_ENVIRONMENT_FORCE" >&2; exit 4;
+  }
+  if grep -q 'BOAT_ENV_FORCES_CONFIG_FAILED\|BOAT_ENV_FORCES_INVALID_VELOCITY' "$OUT/gazebo.log"; then
+    echo "INVALID_GAZEBO_PHYSICAL_ENVIRONMENT_FORCE" >&2; exit 4
+  fi
+fi
 
 (
   cd "$OUT"
@@ -207,3 +232,4 @@ python3 "$ROOT/tools/gazebo/render_blueboat_video.py" \
   --output "$OUT/blueboat_${NAVIGATION_MODE}_${MODE}.mp4" \
   | tee "$OUT/video_render.log"
 echo "BLUEBOAT_GAZEBO_VALIDATED_$MODE (actual Gazebo physics, not Rover substitute)"
+echo "BLUEBOAT_ENVIRONMENT=$BLUEBOAT_ENVIRONMENT"

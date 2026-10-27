@@ -2,7 +2,8 @@
 import tempfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
-from prepare_blueboat_world import inject_blueboat
+from prepare_blueboat_world import (inject_blueboat, PLUGIN_NAME,
+                                    PLUGIN_FILE, ENVIRONMENTS)
 
 with tempfile.TemporaryDirectory() as tmp:
     root=Path(tmp)
@@ -30,6 +31,30 @@ with tempfile.TemporaryDirectory() as tmp:
     assert len(node.findall("world/model"))==1
     assert node.find("world/model").get("name")=="axes"
     assert len(node.findall("world/include"))==2
+    assert node.find("world/plugin[@name='boat::EnvironmentForces']") is None
+
+    for profile in ("current", "wind"):
+        inject_blueboat(source, output, profile)
+        inject_blueboat(output, output, profile)
+        prepared = ET.parse(output).getroot()
+        plugins = [p for p in prepared.findall("world/plugin")
+                   if p.get("name") == PLUGIN_NAME]
+        assert len(plugins) == 1
+        plugin = plugins[0]
+        assert plugin.get("filename") == PLUGIN_FILE
+        values = tuple(float(plugin.findtext(n)) for n in
+                       ("current_x", "current_y", "wind_x", "wind_y"))
+        assert values == ENVIRONMENTS[profile]
+        assert len(prepared.findall("world/include")) == 2
+        assert prepared.find("world/plugin[@name='test']") is not None
+    inject_blueboat(output, output, "calm")
+    assert ET.parse(output).getroot().find(
+        "world/plugin[@name='boat::EnvironmentForces']") is None
+    try:
+        inject_blueboat(source, output, "faked-noise")
+        raise AssertionError("invalid environmental profile was accepted")
+    except ValueError:
+        pass
 
     bad=root/"bad.sdf"
     bad.write_text('<sdf version="1.9"><world name="wrong"/></sdf>')
@@ -38,4 +63,4 @@ with tempfile.TemporaryDirectory() as tmp:
         raise AssertionError("missing upstream water was accepted")
     except ValueError:
         pass
-print("PASS: BlueBoat wave SDF preparation, preserved plugins, duplicate-safe")
+print("PASS: BlueBoat wave SDF preparation, environmental forces, duplicate-safe")

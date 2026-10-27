@@ -91,6 +91,11 @@ jobs:
             -DBOAT_MAVLINK_INCLUDE_DIR="$GITHUB_WORKSPACE/mavlink_headers"
           cmake --build Boat/build-mavlink --parallel 2
           ctest --test-dir Boat/build-mavlink --output-on-failure
+      - name: Build actual Gazebo hull-current and wind-force plugin
+        run: |
+          cmake -S Boat/tools/gazebo -B Boat/build-gazebo-env -DCMAKE_BUILD_TYPE=Release
+          cmake --build Boat/build-gazebo-env --parallel 2
+          test -s Boat/build-gazebo-env/libboat_environment_forces.so
       - name: Download ArduRover SITL binary and test-only MAVLink client
         run: |
           python3 -m pip install --disable-pip-version-check --user "pymavlink>=2.4,<2.5"
@@ -106,6 +111,8 @@ jobs:
         run: bash -n Boat/tools/gazebo/run_blueboat_auto.sh
       - name: Validate MP4 renderer against synthetic test fixture only
         run: python3 Boat/tools/gazebo/test_render_blueboat_video.py
+      - name: Validate Gazebo environmental SDF profiles
+        run: python3 Boat/tools/gazebo/test_prepare_blueboat_world.py
       - name: Validate genuine BlueBoat Gazebo dependencies
         working-directory: Boat
         run: bash tools/gazebo/check_blueboat.sh --check-only
@@ -131,11 +138,29 @@ jobs:
           BLUEBOAT_NAVIGATION_MODE=onboard \
           BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output/onboard-hold" \
           timeout --signal=TERM --kill-after=15s 300s bash tools/gazebo/run_blueboat_auto.sh --sitl-only hold
+      - name: Execute BlueBoat onboard GNSS blackout with physical water-current force
+        working-directory: Boat
+        run: |
+          BLUEBOAT_ENVIRONMENT=current \
+          BLUEBOAT_NAVIGATION_MODE=onboard \
+          BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output/onboard-hold-current" \
+          timeout --signal=TERM --kill-after=15s 300s bash tools/gazebo/run_blueboat_auto.sh --sitl-only hold
+      - name: Execute BlueBoat onboard GNSS blackout with physical wind force
+        working-directory: Boat
+        run: |
+          BLUEBOAT_ENVIRONMENT=wind \
+          BLUEBOAT_NAVIGATION_MODE=onboard \
+          BLUEBOAT_OUTPUT_DIR="$GITHUB_WORKSPACE/blueboat-output/onboard-hold-wind" \
+          timeout --signal=TERM --kill-after=15s 300s bash tools/gazebo/run_blueboat_auto.sh --sitl-only hold
+      - name: Confirm actual Gazebo hull response differs from calm after HOLD
+        run: |
+          python3 Boat/tools/gazebo/verify_environment_trials.py \
+            --root blueboat-output --output blueboat-output/environment_matrix_v015.json
       - name: Preserve genuine Gazebo physics reports even on failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: boat-v013-genuine-gazebo-blueboat-with-mp4
+          name: boat-v015-genuine-gazebo-blueboat-environment-with-mp4
           path: |
             blueboat-output/
             Boat/sitl-smoke-output/ardurover-git-version.txt

@@ -28,6 +28,11 @@ jobs:
           python3 tools/marine/test_onboard_environment_matrix.py
           python3 tools/marine/run_onboard_environment_matrix.py --sitl-only \
             --executable ./build/boat_marine_validation --output-dir marine-output
+      - name: Measure coefficient sensitivity in the deterministic 3DOF marine surrogate
+        run: |
+          python3 tools/marine/test_verify_sensitivity_csv.py
+          ./build/boat_marine_sensitivity --model-only-sensitivity > marine-output/parameter_sensitivity_v017.csv
+          python3 tools/marine/verify_sensitivity_csv.py marine-output/parameter_sensitivity_v017.csv
       - name: Upload standalone marine model evidence
         if: always()
         uses: actions/upload-artifact@v4

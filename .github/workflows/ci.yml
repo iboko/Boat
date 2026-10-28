@@ -38,6 +38,11 @@ jobs:
           python3 tools/marine/test_verify_identification_csv.py
           ./build/boat_marine_identification --model-only-identification > marine-output/parameter_identification_v018.csv
           python3 tools/marine/verify_identification_csv.py marine-output/parameter_identification_v018.csv
+      - name: Quantify empirical parameter-estimate dispersion under synthetic sensor noise
+        run: |
+          python3 tools/marine/test_verify_noise_csv.py
+          ./build/boat_marine_noise --model-only-noise > marine-output/parameter_noise_v019.csv
+          python3 tools/marine/verify_noise_csv.py marine-output/parameter_noise_v019.csv
       - name: Upload standalone marine model evidence
         if: always()
         uses: actions/upload-artifact@v4

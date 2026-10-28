@@ -43,6 +43,11 @@ jobs:
           python3 tools/marine/test_verify_noise_csv.py
           ./build/boat_marine_noise --model-only-noise > marine-output/parameter_noise_v019.csv
           python3 tools/marine/verify_noise_csv.py marine-output/parameter_noise_v019.csv
+      - name: Compare instantaneous and integrated marine identification on matched noise
+        run: |
+          python3 tools/marine/test_verify_windowed_csv.py
+          ./build/boat_marine_windowed_comparison --model-only-compare > marine-output/parameter_windowed_v020.csv
+          python3 tools/marine/verify_windowed_csv.py marine-output/parameter_windowed_v020.csv
       - name: Upload standalone marine model evidence
         if: always()
         uses: actions/upload-artifact@v4

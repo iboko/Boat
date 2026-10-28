@@ -1,4 +1,5 @@
 #include "boat/marine_noise.hpp"
+#include "boat/marine_windowed.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -45,7 +46,8 @@ double percentile(const std::vector<double>& sorted,double proportion) {
 
 } // namespace
 
-NoiseTrialSummary evaluateMarineNoise(NoiseTrialSettings settings) {
+NoiseTrialSummary evaluateMarineNoise(NoiseTrialSettings settings,
+                                     std::size_t window_samples) {
     const bool valid=std::isfinite(settings.speed_std_mps) &&
         std::isfinite(settings.yaw_rate_std_radps) &&
         std::isfinite(settings.heading_std_rad) &&
@@ -53,7 +55,8 @@ NoiseTrialSummary evaluateMarineNoise(NoiseTrialSettings settings) {
         settings.yaw_rate_std_radps>=0.0 &&
         settings.yaw_rate_std_radps<=0.02 &&
         settings.heading_std_rad>=0.0 && settings.heading_std_rad<=0.05 &&
-        settings.trials>=5 && settings.trials<=500;
+        settings.trials>=5 && settings.trials<=500 &&
+        (window_samples==1 || (window_samples>=2 && window_samples<=200));
     if(!valid)throw std::invalid_argument("invalid marine noise experiment setup");
     const auto actual=actualParameters();
     const auto clean=generateRecord(actual);
@@ -82,12 +85,14 @@ NoiseTrialSummary evaluateMarineNoise(NoiseTrialSettings settings) {
             noisy.push_back({states[i],states[i+1],clean[i].applied,
                              clean[i].environment});
         try {
-            const auto result=identifyMarineParameters(noisy);
+            const auto parameters=window_samples==1 ?
+                identifyMarineParameters(noisy).parameters :
+                identifyMarineParametersWindowed(noisy,window_samples).parameters;
             const std::array<double,4> values{{
-                result.parameters.mass_kg,
-                result.parameters.surge_linear_drag_ns_per_m,
-                result.parameters.yaw_inertia_kgm2,
-                result.parameters.yaw_drag_nms_per_rad}};
+                parameters.mass_kg,
+                parameters.surge_linear_drag_ns_per_m,
+                parameters.yaw_inertia_kgm2,
+                parameters.yaw_drag_nms_per_rad}};
             for(std::size_t i=0;i<values.size();++i)samples[i].push_back(values[i]);
             ++accepted;
         } catch(const std::invalid_argument&) {

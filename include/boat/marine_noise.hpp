@@ -36,6 +36,9 @@ struct NoiseTrialSummary {
 // sampled state (a shared noisy state for adjacent record pairs). The range
 // [p05,p95] is an empirical percentile interval, NOT a real-data confidence
 // interval: dynamics, physical forces and noise law are assumed exact.
-NoiseTrialSummary evaluateMarineNoise(NoiseTrialSettings settings);
+// window_samples=1 retains v0.19 finite-difference regression. A larger
+// value uses non-overlapping integrated observations (v0.20).
+NoiseTrialSummary evaluateMarineNoise(NoiseTrialSettings settings,
+                                     std::size_t window_samples = 1);
 
 } // namespace boat::marine
